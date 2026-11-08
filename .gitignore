@@ -1,0 +1,15 @@
+/.tools/
+/.cache/
+/.migration/
+/build/
+/dist/
+/package/
+/config/
+/logs/
+/NOTICE.md
+__pycache__/
+*.pdb
+*.o
+.env
+.env.*
+*.dmp
