@@ -38,6 +38,7 @@ public:
     void begin(HWND owner,HDC dc);
     void end();
     void capture(HDC dc,const wchar_t* text,const RECT& rect,UINT format);
+    void add(const RECT& rect, const std::wstring& text);
     void mouse_move(POINT point);
     void hover(POINT point);
     void hide();

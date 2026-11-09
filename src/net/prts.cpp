@@ -11,6 +11,7 @@
 #include <cwchar>
 #include <cwctype>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -803,6 +804,10 @@ bool PrtsClient::download_image(const std::wstring& enemy_name, std::vector<unsi
         }
         normalized.push_back(image_url[i]);
     }
+    // The media hostname redirects thumbnails back to the canonical wiki host.
+    // Request it directly, retaining the transport's refusal of arbitrary redirects.
+    constexpr std::wstring_view media = L"https://media.prts.wiki/";
+    if (normalized.starts_with(media)) normalized.replace(0, media.size(), L"https://prts.wiki/");
     std::string image_body;
     const auto now = GetTickCount64();
     if (now >= deadline) { error = L"头像请求超时"; return false; }

@@ -273,6 +273,9 @@ std::wstring OverflowHints::text_at(POINT point) const {
     for(auto item=items_.rbegin();item!=items_.rend();++item) if(PtInRect(&item->rect,point)) return item->text;
     return {};
 }
+void OverflowHints::add(const RECT& rect, const std::wstring& text) {
+    if (!text.empty() && !IsRectEmpty(&rect)) items_.push_back({rect, text});
+}
 bool OverflowHints::create() {
     if(tooltip_) return true;
     static const bool controls=[] {

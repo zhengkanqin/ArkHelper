@@ -184,6 +184,8 @@ if ($Target -eq 'Tests' -or ($Target -eq 'All' -and -not $SkipTests)) {
         Compile 'tests\live_path_reader_tests.cpp'; Compile 'native\modules\common\il2cpp_runtime.cpp')
     Link (Join-Path $Tests 'live_range_reader_tests.exe') @(
         Compile 'tests\live_range_reader_tests.cpp'; Compile 'native\modules\common\il2cpp_runtime.cpp')
+    Link (Join-Path $Tests 'enemy_definition_tests.exe') @(
+        Compile 'tests\enemy_definition_tests.cpp'; Compile 'native\modules\common\il2cpp_runtime.cpp')
     Link (Join-Path $Tests 'features_display_tests.exe') @(
         Compile 'tests\features_display_tests.cpp'; Compile 'src\features\features.cpp')
     Link (Join-Path $Tests 'gfx_line_style_tests.exe') @(
@@ -233,6 +235,7 @@ if ($Target -eq 'Tests' -or ($Target -eq 'All' -and -not $SkipTests)) {
     Run-Test 'autochess_statistics_tests'
     Run-Test 'live_path_reader_tests'
     Run-Test 'live_range_reader_tests'
+    Run-Test 'enemy_definition_tests'
     Run-Test 'features_display_tests'
     Run-Test 'gfx_line_style_tests'
     Run-Test 'http_tests'

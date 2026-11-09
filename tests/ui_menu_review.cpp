@@ -432,6 +432,23 @@ int wmain(int argc, wchar_t** argv) {
         if(panel->width_override_px!=std::clamp(shared_width-45,panels::S(*panel,260),900) || panel->resizing_width || GetCapture()==panel->hwnd)
             throw std::runtime_error("shared resize lost its copied input or captured native mouse");
         panel->x=previous_x;panel->y=previous_y;
+        panels::SharedCursor cursor;
+        const auto arrow=LoadCursorW(nullptr,IDC_ARROW);
+        const HWND capture_before=GetCapture();
+        CURSORINFO cursor_before{sizeof(cursor_before)};GetCursorInfo(&cursor_before);
+        if(!cursor.show({-30000,-30000},arrow) || !IsWindowVisible(cursor.window()))
+            throw std::runtime_error("shared cursor fallback could not present an independent layered cursor");
+        const auto cursor_style=GetWindowLongPtrW(cursor.window(),GWL_EXSTYLE);
+        if((cursor_style&(WS_EX_LAYERED|WS_EX_TRANSPARENT|WS_EX_NOACTIVATE))!=(WS_EX_LAYERED|WS_EX_TRANSPARENT|WS_EX_NOACTIVATE) || GetCapture()!=capture_before)
+            throw std::runtime_error("shared cursor blocks native mouse delivery or takes capture");
+        if(!cursor.show({-29950,-29930},LoadCursorW(nullptr,IDC_SIZEWE)))
+            throw std::runtime_error("shared cursor could not switch to horizontal resize feedback");
+        CURSORINFO cursor_after{sizeof(cursor_after)};GetCursorInfo(&cursor_after);
+        if(cursor_before.flags!=cursor_after.flags || cursor_before.hCursor!=cursor_after.hCursor)
+            throw std::runtime_error("shared cursor changed the actual system cursor or its visibility");
+        cursor.hide();
+        if(IsWindowVisible(cursor.window())) throw std::runtime_error("shared cursor does not hide on exit");
+        cursor.destroy();
         SetWindowPos(panel->hwnd,nullptr,panel->x,panel->y,0,0,SWP_NOSIZE|SWP_NOACTIVATE|SWP_NOZORDER);
         panel->width_override_px=panels::S(*panel,260);
         panel->ui_scale=100;
@@ -544,6 +561,9 @@ int wmain(int argc, wchar_t** argv) {
         panels::set_avatars(panels::kPrtsPanelId,{nullptr},28);
         panels::render(*prts);
         const int narrow_height=prts->row_heights[3],narrow_columns=prts->table_columns[2];
+        const auto portrait=prts->row_rects[0];
+        if(prts->hints.text_at({(portrait.left+portrait.right)/2,(portrait.top+portrait.bottom)/2})!=reference_icon.left)
+            throw std::runtime_error("enemy portrait hover did not expose the full enemy name");
         if(narrow_columns>=3 || narrow_height<=panels::row_height(*prts)) throw std::runtime_error("narrow PRTS did not wrap paragraphs or reduce grid columns");
         save_review_bitmap(prts->surface,destination/L"panel-prts-narrow.bmp");
         prts->width_override_px=panels::S(*prts,740);panels::render(*prts);
@@ -568,6 +588,9 @@ int wmain(int argc, wchar_t** argv) {
         for(int i=0;i<4;++i) SendMessageW(prts->hwnd,WM_MOUSEWHEEL,MAKEWPARAM(0,static_cast<WORD>(-WHEEL_DELTA*20)),MAKELPARAM(icon_wheel.x,icon_wheel.y));
         if(prts->icon_scroll_px!=prts->max_icon_scroll || IsRectEmpty(&prts->row_rects[129]) || prts->scroll_px!=detail_scroll)
             throw std::runtime_error("full enemy roster bottom is unreachable or scrolling it moved the selected enemy detail");
+        const auto scrolled_portrait=prts->row_rects[129];
+        if(prts->hints.text_at({(scrolled_portrait.left+scrolled_portrait.right)/2,(scrolled_portrait.top+scrolled_portrait.bottom)/2})!=reference_icon.left)
+            throw std::runtime_error("scrolled enemy portrait tooltip does not follow its visible row");
         int selected_icon=-1;
         panels::g_callbacks.on_row_clicked=[&](const wchar_t*,int index) { selected_icon=index; };
         const auto last_icon=prts->row_rects[129];

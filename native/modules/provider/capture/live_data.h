@@ -56,6 +56,18 @@ inline bool number(il2cpp::Runtime& rt, void* boxed, double& value) {
         double has_value = 0;
         if (!number(rt, member(rt, boxed, "HasValue"), has_value) || !has_value) return false;
         return number(rt, member(rt, boxed, "Value"), value);
+    } else if (name == "CodeStage.AntiCheat.ObscuredTypes.ObscuredInt" ||
+               name == "CodeStage.AntiCheat.ObscuredTypes.ObscuredFloat") {
+        // field_get_value_object supplied a boxed copy. Use its existing numeric accessor;
+        // never alter the game's stored wrapper, keys or integrity checks.
+        void* accessor = method(rt, klass, "GetDecrypted");
+        if (!accessor || !rt.class_is_value(klass)) return false;
+        void* returned = rt.class_from_type(rt.method_return(accessor));
+        const char* expected = name.ends_with("ObscuredInt") ? "System.Int32" : "System.Single";
+        if (!returned || rt.klass_name(returned) != expected) return false;
+        void* decoded = rt.invoke(accessor, boxed);
+        if (!decoded || rt.klass_name(rt.object_class(decoded)) != expected) return false;
+        return number(rt, decoded, value);
     } else return false;
     return std::isfinite(value);
 }
@@ -305,20 +317,71 @@ inline void definitions(il2cpp::Runtime& rt, void* level, Stage& stage) {
     if (rt.unbox<bool>(rt.call(root.get(), "MoveNext"))) stage.overview_partial = true;
 }
 
-inline void reference_names(il2cpp::Runtime& rt, void* level, Stage& stage) {
+inline void merge_definition(Stage& stage, Enemy incoming) {
+    if (incoming.key.empty()) return;
+    for (auto& current : stage.enemies) {
+        if (current.key != incoming.key) continue;
+        if (current.name.empty() || current.name == current.key) current.name = incoming.name;
+        if (current.description.empty()) current.description = incoming.description;
+        const auto put = [&](std::uint32_t bit, auto member) {
+            if ((incoming.stats_mask & bit) && !(current.stats_mask & bit))
+                current.attributes.*member = incoming.attributes.*member;
+        };
+        put(1u << 1, &EnemyAttributes::max_hp); put(1u << 2, &EnemyAttributes::atk);
+        put(1u << 3, &EnemyAttributes::def); put(1u << 4, &EnemyAttributes::magic_resistance);
+        put(1u << 5, &EnemyAttributes::move_speed); put(1u << 6, &EnemyAttributes::attack_speed);
+        put(1u << 7, &EnemyAttributes::base_attack_time); put(1u << 8, &EnemyAttributes::mass_level);
+        put(1u << 9, &EnemyAttributes::block_cnt); put(1u << 10, &EnemyAttributes::life_point_reduce);
+        current.stats_mask |= incoming.stats_mask;
+        return;
+    }
+    if (stage.enemies.size() >= 4096) { stage.overview_partial = true; return; }
+    stage.enemy_keys.push_back(incoming.key);
+    stage.enemies.push_back(std::move(incoming));
+}
+
+inline bool read_reference_definition(il2cpp::Runtime& rt, void* db, void* lookup,
+                                      void* reference, Stage& stage) {
+    if (!lookup || !reference) return false;
+    // Pass the entire current-level reference, including its level and overwrittenData.
+    // An ID-only lookup would lose level overrides; handbook/PRTS values are not battle values.
+    void* output = nullptr;
+    if (!rt.unbox<bool>(rt.invoke(lookup, db, {reference, &output})) || !output) return false;
+    il2cpp::Runtime::Root root(rt, output);
+    Enemy enemy = definition(rt, root.get());
+    const auto key = text(rt, member(rt, reference, "id"));
+    if (!key.empty()) enemy.key = key;
+    if (enemy.key.empty()) return false;
+    merge_definition(stage, std::move(enemy));
+    return true;
+}
+
+inline void reference_definitions(il2cpp::Runtime& rt, void* level, Stage& stage) {
     void* references = member(rt, level, "enemyDbRefs");
     const int total = count(rt, references, 4096);
     if (references && rt.count(references) > 4096) stage.overview_partial = true;
     if (!total) return;
-    // EnemyDB is already initialized by the game. Invoke only its name lookup for IDs referenced
-    // by this level, rather than enumerate/copy the full database or download an offline table.
+    // Only read references in the current level; never enumerate the whole EnemyDB.
     void* db_class = rt.find("Torappu", "EnemyDB");
     void* get_name = db_class ? method(rt, db_class, "GetEnemyName", 1) : nullptr;
-    if (!get_name) return;
-    void* returned = rt.class_from_type(rt.method_return(get_name));
-    void* argument = rt.class_from_type(rt.method_param(get_name, 0));
-    if (!returned || !argument || rt.klass_name(returned) != "System.String" ||
-        rt.klass_name(argument) != "System.String") return;
+    void* lookup = db_class ? method(rt, db_class, "TryGet", 2) : nullptr;
+    if (lookup) {
+        void* result = rt.class_from_type(rt.method_return(lookup));
+        void* input = rt.class_from_type(rt.method_param(lookup, 0));
+        void* output = rt.class_from_type(rt.method_param(lookup, 1));
+        if (!result || !input || !output || rt.klass_name(result) != "System.Boolean" ||
+            std::strcmp(rt.class_name(input), "EnemyDataDbReference") ||
+            std::strcmp(rt.class_name(output), "EnemyData") ||
+            rt.class_is_value(input) || rt.class_is_value(output) ||
+            !rt.type(rt.method_param(lookup, 1)).ends_with("&")) lookup = nullptr;
+    }
+    if (get_name) {
+        void* returned = rt.class_from_type(rt.method_return(get_name));
+        void* argument = rt.class_from_type(rt.method_param(get_name, 0));
+        if (!returned || !argument || rt.klass_name(returned) != "System.String" ||
+            rt.klass_name(argument) != "System.String") get_name = nullptr;
+    }
+    if (!lookup && !get_name) return;
     void* db = rt.singleton(db_class);
     for (int i = 0; i < total; ++i) {
         try {
@@ -326,10 +389,12 @@ inline void reference_names(il2cpp::Runtime& rt, void* level, Stage& stage) {
             void* id = member(rt, reference, "id");
             const std::string key = text(rt, id);
             if (key.empty()) continue;
+            try { read_reference_definition(rt, db, lookup, reference, stage); }
+            catch (...) { /* A missing definition still permits a name-only fallback. */ }
             bool named = false;
             for (const auto& enemy : stage.enemies)
                 if (enemy.key == key && !enemy.name.empty() && enemy.name != key) { named = true; break; }
-            if (named) continue;
+            if (named || !get_name) continue;
             const auto name = text(rt, rt.invoke(get_name, db, {id}));
             merge_enemy_name(stage, key, name);
         } catch (...) { /* One unavailable name cannot discard the current level. */ }
@@ -407,7 +472,7 @@ inline Stage stage(il2cpp::Runtime& rt, void* controller, const char* level_id, 
     if (!level) return stage;
     stage.loaded = true;
     try { definitions(rt, level, stage); } catch (...) { stage.overview_partial = true; }
-    try { reference_names(rt, level, stage); } catch (...) { stage.overview_partial = true; }
+    try { reference_definitions(rt, level, stage); } catch (...) { stage.overview_partial = true; }
     void* map = member(rt, level, "mapData");
     // MapData exposes width/height even when its backing map is a CLR rectangular array.
     stage.map.rows = static_cast<int>(std::clamp(scalar(rt, map, "height"), 0.0, 256.0));

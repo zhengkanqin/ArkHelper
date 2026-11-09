@@ -1,6 +1,7 @@
 #include "net/prts.h"
 #include "net/http.h"
 #include <windows.h>
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
@@ -14,6 +15,7 @@ std::condition_variable fake_cv;
 std::map<std::wstring, unsigned> calls, fail_next;
 std::map<std::wstring, std::string> responses;
 std::set<std::wstring> blocked;
+std::vector<std::wstring> requested_urls;
 unsigned checks = 0, failures = 0;
 void check(bool passed, const char* label) {
     ++checks;
@@ -47,6 +49,7 @@ bool http_get(const std::wstring& url, std::string& body, std::string& error, co
     const std::wstring name = start == std::wstring::npos ? L"image-bytes" : url.substr(start+(image ? 8 : 6));
     const std::wstring key = (image ? L"image:" : L"")+name;
     std::unique_lock lock(fake_mutex);
+    requested_urls.push_back(url);
     ++calls[key];
     fake_cv.notify_all();
     while (blocked.count(key)) {
@@ -155,6 +158,21 @@ int main() {
         client.request(L"api-error");
         check(take(client, L"api-error", result) && result.error.find(L"Page does not exist") != std::wstring::npos,
               "MediaWiki errors expose the API reason");
+    }
+    {
+        PrtsClient client;
+        { std::lock_guard lock(fake_mutex);
+          responses[L"image:redirected-thumbnail"] = R"({"source":"https://media.prts.wiki/thumb/test.png/96px-test.png"})";
+          responses[L"image-bytes"] = "thumbnail bytes"; }
+        client.request_image(L"redirected-thumbnail");
+        std::wstring name, error;
+        std::vector<unsigned char> bytes;
+        check(until([&] { return client.poll_image(name, bytes, &error); }) &&
+              !bytes.empty() && error.empty(), "redirected PRTS thumbnail downloads successfully");
+        { std::lock_guard lock(fake_mutex);
+          check(std::find(requested_urls.begin(), requested_urls.end(), L"https://prts.wiki/thumb/test.png/96px-test.png") != requested_urls.end() &&
+                std::find(requested_urls.begin(), requested_urls.end(), L"https://media.prts.wiki/thumb/test.png/96px-test.png") == requested_urls.end(),
+                "media thumbnails use the canonical host without relying on HTTP redirects"); }
     }
     {
         PrtsClient client;

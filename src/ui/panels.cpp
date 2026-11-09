@@ -118,6 +118,67 @@ POINT g_shared_hover_point{};
 ULONGLONG g_shared_hover_since = 0;
 void refresh_shared_input();
 
+class SharedCursor {
+    HWND hwnd_ = nullptr;
+    LayeredBitmap surface_, white_;
+    HCURSOR cursor_ = nullptr;
+    POINT hotspot_{};
+public:
+    HWND window() const { return hwnd_; }
+    void hide() { if (hwnd_) ShowWindow(hwnd_, SW_HIDE); }
+    void destroy() {
+        if (hwnd_) DestroyWindow(hwnd_);
+        hwnd_ = nullptr; cursor_ = nullptr;
+        layered_bitmap_destroy(surface_); layered_bitmap_destroy(white_);
+    }
+    bool show(POINT point, HCURSOR cursor) {
+        if (!cursor) { hide(); return false; }
+        if (!hwnd_) {
+            WNDCLASSW wc{};
+            wc.hInstance = g_instance; wc.lpfnWndProc = DefWindowProcW;
+            wc.lpszClassName = L"ArkHelper.SharedCursor";
+            if (!RegisterClassW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return false;
+            hwnd_ = CreateWindowExW(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+                wc.lpszClassName, L"", WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, g_instance, nullptr);
+            if (!hwnd_) return false;
+        }
+        if (cursor_ != cursor) {
+            ICONINFO info{};
+            if (!GetIconInfo(cursor, &info)) { hide(); return false; }
+            BITMAP dimensions{};
+            GetObjectW(info.hbmColor ? info.hbmColor : info.hbmMask, sizeof(dimensions), &dimensions);
+            const int width = dimensions.bmWidth;
+            const int height = info.hbmColor ? dimensions.bmHeight : dimensions.bmHeight / 2;
+            hotspot_ = {static_cast<LONG>(info.xHotspot), static_cast<LONG>(info.yHotspot)};
+            if (info.hbmColor) DeleteObject(info.hbmColor);
+            if (info.hbmMask) DeleteObject(info.hbmMask);
+            if (width <= 0 || height <= 0 || !layered_bitmap_create(surface_, width, height) ||
+                !layered_bitmap_create(white_, width, height)) { hide(); return false; }
+            // Two backgrounds recover alpha for both ARGB and monochrome system cursors.
+            fill_rect(surface_.dc, RECT{0, 0, width, height}, RGB(0, 0, 0));
+            fill_rect(white_.dc, RECT{0, 0, width, height}, RGB(255, 255, 255));
+            DrawIconEx(surface_.dc, 0, 0, cursor, width, height, 0, nullptr, DI_NORMAL);
+            DrawIconEx(white_.dc, 0, 0, cursor, width, height, 0, nullptr, DI_NORMAL);
+            GdiFlush();
+            auto* black = static_cast<std::uint32_t*>(surface_.bits);
+            const auto* white = static_cast<const std::uint32_t*>(white_.bits);
+            for (int i = 0; i < width * height; ++i) {
+                const int difference = std::clamp(static_cast<int>(white[i] & 255) - static_cast<int>(black[i] & 255), 0, 255);
+                const auto alpha = static_cast<std::uint32_t>(255 - difference);
+                black[i] = (alpha << 24) | (black[i] & 0xFFFFFF);
+            }
+            SetWindowPos(hwnd_, HWND_TOPMOST, point.x-hotspot_.x, point.y-hotspot_.y,
+                width, height, SWP_NOACTIVATE);
+            if (!layered_bitmap_present(hwnd_, surface_, 255)) { hide(); return false; }
+            cursor_ = cursor;
+        }
+        SetWindowPos(hwnd_, HWND_TOPMOST, point.x-hotspot_.x, point.y-hotspot_.y,
+            0, 0, SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        return true;
+    }
+};
+SharedCursor g_shared_cursor;
+
 void cancel_interaction(PanelState& panel)
 {
     if (panel.dragging) g_drag_starts.clear();
@@ -128,6 +189,7 @@ void cancel_interaction(PanelState& panel)
 
 void cancel_shared_input(PanelState* panel = nullptr)
 {
+    g_shared_cursor.hide();
     if (g_shared_gesture && (!panel || g_shared_gesture == panel)) {
         cancel_interaction(*g_shared_gesture);
         g_shared_gesture = nullptr;
@@ -652,6 +714,7 @@ void render(PanelState& panel)
                 panel.row_rects[row_index] = row_rect;
                 panel.row_rects[row_index].top = std::max<LONG>(row_rect.top, clip_top);
                 panel.row_rects[row_index].bottom = std::min<LONG>(row_rect.bottom, clip_bottom);
+                panel.hints.add(panel.row_rects[row_index], row.left);
                 const int icon_x = row_rect.left + (icon_column - avatar_size) / 2;
                 const int icon_y = left_top + (row_height - avatar_size) / 2;
                 if (has_avatars && avatar_index < panel.avatars.size() && panel.avatars[avatar_index])
@@ -872,6 +935,9 @@ void position_and_present(PanelState& panel)
     const int height = panel.surface.height;
     SetWindowPos(panel.hwnd, HWND_TOPMOST, panel.x, panel.y, width, height, SWP_NOACTIVATE);
     layered_bitmap_present(panel.hwnd, panel.surface, panel_alpha(panel));
+    if (g_shared_cursor.window() && IsWindowVisible(g_shared_cursor.window()))
+        SetWindowPos(g_shared_cursor.window(), HWND_TOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     if (!panel.visible)
     {
         ShowWindow(panel.hwnd, SW_SHOWNOACTIVATE);
@@ -1120,6 +1186,18 @@ void begin_drag(PanelState& panel)
     }
 }
 
+LPCWSTR panel_cursor(const PanelState& panel, POINT point)
+{
+    if ((panel.closeable && PtInRect(&panel.close_button, point)) ||
+        PtInRect(&panel.settings_button, point) || PtInRect(&panel.toggle, point) ||
+        (has_dock_partner(panel) && PtInRect(&panel.split_button, point)) ||
+        (panel.max_horizontal > 0 && PtInRect(&panel.horizontal_track, point))) return IDC_HAND;
+    if (PtInRect(&panel.width_grip, point)) return IDC_SIZEWE;
+    if (PtInRect(&panel.resize_grip, point)) return panel.collapsed ? IDC_SIZEALL : IDC_SIZENS;
+    if (PtInRect(&panel.title_bar, point)) return IDC_SIZEALL;
+    return IDC_ARROW;
+}
+
 LRESULT CALLBACK panel_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
     PanelState* panel = reinterpret_cast<PanelState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
@@ -1154,37 +1232,7 @@ LRESULT CALLBACK panel_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
             break;
         }
         ScreenToClient(hwnd, &point);
-        LPCWSTR cursor = IDC_ARROW;
-        if ((panel->closeable && PtInRect(&panel->close_button, point)) ||
-            PtInRect(&panel->settings_button,point) ||
-            PtInRect(&panel->toggle, point) ||
-            (has_dock_partner(*panel) && PtInRect(&panel->split_button, point)))
-        {
-            cursor = IDC_HAND;
-        }
-        else if (panel->max_horizontal > 0 && PtInRect(&panel->horizontal_track, point))
-        {
-            cursor = IDC_HAND;
-        }
-        else if (PtInRect(&panel->width_grip, point))
-        {
-            cursor = IDC_SIZEWE;
-        }
-        else if (PtInRect(&panel->resize_grip, point))
-        {
-            // 收纳态底边用于拖动，提示移动而不是伸缩。
-            cursor = panel->collapsed ? IDC_SIZEALL : IDC_SIZENS;
-        }
-        else if (PtInRect(&panel->title_bar, point))
-        {
-            cursor = IDC_SIZEALL;
-        }
-        else if (PtInRect(&panel->toggle, point) ||
-                 (has_dock_partner(*panel) && PtInRect(&panel->split_button, point)))
-        {
-            cursor = IDC_HAND;
-        }
-        SetCursor(LoadCursorW(nullptr, cursor));
+        SetCursor(LoadCursorW(nullptr, panel_cursor(*panel, point)));
         return TRUE;
     }
     case WM_LBUTTONDOWN:
@@ -1583,7 +1631,7 @@ void dispatch_shared_mouse(const SharedMouseEvent& event)
         g_shared_hover = target;
         g_shared_hover_since = GetTickCount64();
     }
-    if (!target) return;
+    if (!target) { g_shared_cursor.hide(); return; }
     if (std::abs(event.screen.x - g_shared_hover_point.x) > 3 || std::abs(event.screen.y - g_shared_hover_point.y) > 3) {
         target->hints.hide();
         g_shared_hover_point = event.screen;
@@ -1596,13 +1644,30 @@ void dispatch_shared_mouse(const SharedMouseEvent& event)
     }
 }
 
+void refresh_shared_cursor()
+{
+    POINT point{};
+    GetCursorPos(&point);
+    auto* panel = shared_mouse_hit(point);
+    CURSORINFO info{sizeof(info)};
+    if (!panel || (GetCursorInfo(&info) && (info.flags & CURSOR_SHOWING))) {
+        g_shared_cursor.hide();
+        return;
+    }
+    POINT local = point;
+    ScreenToClient(panel->hwnd, &local);
+    g_shared_cursor.show(point, LoadCursorW(nullptr, panel_cursor(*panel, local)));
+}
+
 LRESULT CALLBACK shared_mouse_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
     if (message == kSharedMouseMessage) {
         for (const auto& event : g_shared_mouse.take()) dispatch_shared_mouse(event);
+        refresh_shared_cursor();
         return 0;
     }
     if (message == WM_TIMER && wparam == kSharedMouseTimer) {
+        refresh_shared_cursor();
         if (g_shared_gesture) {
             if (!(GetAsyncKeyState(VK_LBUTTON) & 0x8000) ||
                 GetAncestor(GetForegroundWindow(), GA_ROOT) != g_shared_source) cancel_shared_input();
@@ -1708,6 +1773,7 @@ void fit_statistics_width(const std::vector<Row>& rows)
 
 void shutdown()
 {
+    g_shared_cursor.destroy();
     cancel_shared_input();
     g_shared_mouse.stop();
     if (g_shared_window) { DestroyWindow(g_shared_window); g_shared_window = nullptr; }
