@@ -111,6 +111,10 @@ struct UnitSample {
 // Worker publishes feature state; disabled (the default) performs no range reads/projection.
 void set_range_enabled(bool enabled);
 
+void set_spawns_enabled(bool enabled);
+// True includes a known empty current queue; false permits the conservative stage prefix.
+bool spawn_snapshot(std::vector<Spawn>& out, std::uint32_t battle_serial);
+
 struct OperatorSample {
     std::uint64_t instance_id = 0;
     char actor_id[96]{};

@@ -153,11 +153,20 @@ int wmain(int argc, wchar_t** argv) {
     bool published = false;
     if (!service(ARK_BATTLE_TEST_SERVICE_NAME, ARK_BATTLE_ABI_VERSION, sizeof(ArkBattleTestApiV1), publish, &published) ||
         !published || !until([] { return snapshot_ready(true); })) return 23;
+    // Reopen before module rundown finishes: the new UI resets RuntimeStop
+    // while the old session is still stopping. The stop reason must be latched.
+    SetEvent(desktop_stop);
+    stop();
+    ResetEvent(desktop_stop);
+    CloseHandle(desktop);
+    desktop=CreateMutexW(nullptr,FALSE,L"Local\\ArkHelp.App");
+    if(!desktop || !until([&]{return !running();}) ||
+       !until([&]{return running() && snapshot_ready();}))return 25;
     stop();
     if (!until([&] { return !running(); })) return 24;
     CloseHandle(desktop);
     CloseHandle(desktop_stop);
     DestroyWindow(window);
-    std::printf("PASS integrated runtime: IPC v%u, battle services, CSV, three clean stop/start sessions, dormant desktop reconnect without reloading\n", arkhelp::ipc::kVersion);
+    std::printf("PASS integrated runtime: IPC v%u, battle services, CSV, clean sessions, dormant and fast desktop reconnect without reloading\n", arkhelp::ipc::kVersion);
     return 0;
 }

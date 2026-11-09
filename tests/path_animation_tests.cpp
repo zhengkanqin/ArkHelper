@@ -148,6 +148,35 @@ int main() {
         hover_pointer.clicked=true;step(1001,hover_pointer);hover_pointer.clicked=false;
         check(std::count_if(animation.playbacks().begin(),animation.playbacks().end(),[](const auto& item){return item.ready;})==ipc::kMaxUnits,
               "one real click did not trigger all overlapping enemies");
+        animation.reset();snapshot=fixture();snapshot.unit_count=0;snapshot.path_count=2;snapshot.spawn_count=4;
+        for(unsigned i=0;i<4;++i) {
+            auto& spawn=snapshot.spawns[i];spawn.flags=ipc::kSpawnScreenValid;spawn.screen={100,100};
+            spawn.route_index=i;spawn.planned_frame=i<2?300:600;spawn.remaining_seconds=i<2?10:20;
+        }
+        for(unsigned i=0;i<2;++i) {
+            snapshot.paths[i]=path;snapshot.paths[i].tracking_id=ipc::spawn_path_id(i);
+        }
+        options.path_on_click=false;step(1000,hover_pointer);
+        check(animation.requests().size()==2 && animation.playbacks()[0].ready && animation.playbacks()[1].ready &&
+            animation.playbacks()[0].id==ipc::spawn_path_id(0) && animation.playbacks()[1].id==ipc::spawn_path_id(1),
+            "red gate did not trigger all routes in its next batch, or included a later batch");
+        step(1250,away);
+        check(animation.playbacks()[0].progress==25 && animation.playbacks()[0].consumed==0,
+            "red gate route was consumed like a moving enemy, or cancelled when pointer left");
+        snapshot.spawn_count=0;
+        for(int t=1500;t<=3000;t+=250)step(t,away);
+        check(animation.playbacks()[0].complete,"red gate playback disappeared before drawing finished when enemies spawned");
+        step(4000,away);check(!animation.playbacks()[0].id,"red gate residue did not expire");
+        snapshot.spawn_count=4;animation.reset();options.path_on_click=true;step(1000,hover_pointer);
+        check(!animation.playbacks()[0].id,"red gate hover bypassed click mode");
+        hover_pointer.clicked=true;step(1001,hover_pointer);hover_pointer.clicked=false;
+        check(animation.playbacks()[0].ready && animation.playbacks()[1].ready,"red gate click did not trigger the next batch");
+        snapshot.spawns[0].flags|=ipc::kSpawnRandom;animation.reset();options.path_on_click=false;step(1000,hover_pointer);
+        check(animation.requests().size()==1 && animation.requests()[0]==ipc::spawn_path_id(1),
+            "red gate accepted an undetermined random spawn or a later batch");
+        check(ipc::spawn_path_id(0)!=42 && ipc::is_spawn_path(ipc::spawn_path_id(65535)) &&
+            !ipc::spawn_path_id(65536) && !ipc::is_spawn_path(ipc::kSpawnPathTag) && !ipc::is_spawn_path(42),
+            "route target namespace or limits overlap ordinary instance IDs");
         std::printf("PASS path animation: %d checks; trigger, pending, completion, residue, click, identity, teleport, resize\n",checks);
     } catch(const std::exception& error) { std::fprintf(stderr,"FAIL %s\n",error.what()); return 1; }
 }

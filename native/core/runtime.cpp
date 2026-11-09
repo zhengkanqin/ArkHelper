@@ -22,6 +22,7 @@ HANDLE worker = nullptr;
 std::mutex boot_mutex;
 std::atomic<bool> running{false};
 std::atomic<bool> stopping{false};
+std::atomic<bool> desktop_shutdown{false};
 std::atomic<bool> failed{false};
 struct State {
     std::filesystem::path root;
@@ -82,7 +83,7 @@ DWORD WINAPI run(void*) {
     for (;;) {
         run_session(current);
         if (failed || !current->modules || !current->modules->fully_stopped() || !desktop_stop ||
-            WaitForSingleObject(desktop_stop, 0) != WAIT_OBJECT_0) break;
+            (!desktop_shutdown && WaitForSingleObject(desktop_stop, 0) != WAIT_OBJECT_0)) break;
         // The pinned DLL waits without hooks or publications until a confirmed desktop
         // session returns. Reopening the UI reuses this thread instead of loading again.
         for (;;) {
@@ -94,6 +95,7 @@ DWORD WINAPI run(void*) {
             break;
         }
         stopping = false;
+        desktop_shutdown = false;
         ResetEvent(failed_event);
     }
     if (desktop_stop) CloseHandle(desktop_stop);
@@ -143,6 +145,7 @@ ARK_EXPORT bool arkhelp_runtime_start(const ArkBootOptionsV1* options) {
     if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
                            reinterpret_cast<LPCWSTR>(&run), &pinned)) { return false; }
     stopping = false;
+    desktop_shutdown = false;
     failed = false;
     ResetEvent(ready_event);
     ResetEvent(failed_event);
@@ -152,6 +155,13 @@ ARK_EXPORT bool arkhelp_runtime_start(const ArkBootOptionsV1* options) {
 }
 ARK_EXPORT bool arkhelp_runtime_is_running() { return running; }
 ARK_EXPORT void arkhelp_runtime_shutdown() {
+    // Latch the stop reason before module cleanup. A rapidly reopened desktop
+    // can reset the named event while the old modules are still draining.
+    HANDLE desktop_stop=OpenEventW(SYNCHRONIZE,FALSE,L"Local\\ArkHelp.RuntimeStop");
+    if(desktop_stop) {
+        if(WaitForSingleObject(desktop_stop,0)==WAIT_OBJECT_0)desktop_shutdown=true;
+        CloseHandle(desktop_stop);
+    }
     stopping = true;
     if (ready_event) { ResetEvent(ready_event); }
 }

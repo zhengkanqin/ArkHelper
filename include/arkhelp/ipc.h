@@ -1,4 +1,4 @@
-// ArkHelper IPC contract v9 (mapping names retain their original .v1 suffix).
+// ArkHelper IPC contract v10 (mapping names retain their original .v1 suffix).
 //
 // Two named shared-memory sections connect the in-game provider plugin (writer of the battle
 // snapshot, reader of commands) with the external ArkHelper.exe overlay (writer of commands, reader
@@ -22,7 +22,7 @@
 
 namespace arkhelp::ipc {
 
-inline constexpr std::uint32_t kVersion = 9;
+inline constexpr std::uint32_t kVersion = 10;
 inline constexpr std::uint32_t kBattleMagic = 0x42484841u;   // "AHHB"
 inline constexpr std::uint32_t kCommandMagic = 0x43484841u;  // "AHHC"
 
@@ -42,6 +42,19 @@ inline constexpr std::uint32_t kMaxPathPoints = 96;
 inline constexpr std::uint32_t kIdCapacity = 96;
 inline constexpr std::uint32_t kNameCapacity = 64;
 inline constexpr std::uint32_t kLevelIdCapacity = 128;
+
+// Path targets reserve the high bit for a route preview. Live instance IDs keep
+// that bit clear; battle_serial independently validates either kind of target.
+inline constexpr std::uint64_t kSpawnPathTag = std::uint64_t{1} << 63;
+inline constexpr std::uint64_t spawn_path_id(std::uint32_t route) {
+    return route < 65536 ? kSpawnPathTag | (static_cast<std::uint64_t>(route) + 1) : 0;
+}
+inline constexpr bool is_spawn_path(std::uint64_t id) {
+    return id > kSpawnPathTag && id <= (kSpawnPathTag | 65536);
+}
+inline constexpr std::uint32_t spawn_path_route(std::uint64_t id) {
+    return static_cast<std::uint32_t>((id & ~kSpawnPathTag) - 1);
+}
 
 // Feature switches: the overlay renders only the features selected in the command payload.
 enum Feature : std::uint32_t {
@@ -206,7 +219,7 @@ struct PathPoint {
     std::uint32_t flags = 0;
 };
 struct PathEntry {
-    std::uint64_t tracking_id = 0;
+    std::uint64_t tracking_id = 0; // live instance ID or spawn_path_id(route)
     std::uint64_t sampled_ms = 0;
     std::uint32_t battle_serial = 0;
     std::uint32_t flags = 0;

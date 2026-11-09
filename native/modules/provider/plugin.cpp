@@ -99,7 +99,7 @@ extern "C" bool arkhelp_provider_initialize(const ArkPluginApiV1* host) {
     ark::arkhelper::capture::initialize(g_host);
     // The IPC layer only publishes what capture/App already expose; it also never fails init.
     ark::arkhelper::ipc_publish::initialize(g_app);
-    log(kLogInfo, "ArkHelper: 已初始化（当前关卡 + 实例采集 + IPC v9）");
+    log(kLogInfo, "ArkHelper: 已初始化（当前关卡 + 实例采集 + IPC v" + std::to_string(arkhelp::ipc::kVersion) + "）");
     return true;
 }
 

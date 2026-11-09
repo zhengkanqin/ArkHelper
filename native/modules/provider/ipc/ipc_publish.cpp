@@ -377,10 +377,12 @@ void fill_spawns(ipc::BattleSnapshot& snapshot, const Stage* stage, const captur
         return;
     }
     const bool want_screen =
-        (g_commands.feature_mask & (ipc::kFeatureSpawnTimer | ipc::kFeatureSpawnCard)) != 0 &&
+        (g_commands.feature_mask & (ipc::kFeatureSpawnTimer | ipc::kFeatureSpawnCard | ipc::kFeatureEnemyPaths)) != 0 &&
         capture::projection_available() && static_cast<bool>(client);
     std::uint32_t written = 0;
-    for (const Spawn& spawn : stage->spawns) {
+    std::vector<Spawn> scheduled;
+    const bool live_schedule = capture::spawn_snapshot(scheduled, status.battle_serial);
+    for (const Spawn& spawn : live_schedule ? scheduled : stage->spawns) {
         if (written >= ipc::kMaxSpawns) {
             break;
         }
@@ -825,6 +827,8 @@ void tick() {
         try_open_commands();
         refresh_commands();
         capture::set_range_enabled(ipc::command_feature_enabled(g_commands, ipc::kFeatureEnemyRange));
+        capture::set_spawns_enabled((g_commands.feature_mask &
+            (ipc::kFeatureSpawnTimer | ipc::kFeatureSpawnCard | ipc::kFeatureEnemyPaths)) != 0);
         capture::set_operator_stats_enabled(ipc::command_feature_enabled(g_commands, ipc::kFeatureOperatorStats));
         capture::set_path_requests(ipc::command_feature_enabled(g_commands, ipc::kFeatureEnemyPaths),
                                   g_commands.path_request_battle_serial, g_commands.path_request_ids,

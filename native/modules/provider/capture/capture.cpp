@@ -32,6 +32,7 @@
 #include "live_range.h"
 #include "live_path.h"
 #include "live_operator.h"
+#include "live_spawns.h"
 #include "operator_samples.h"
 
 namespace ark::arkhelper::capture {
@@ -327,6 +328,11 @@ live::EnemyReader g_enemy_reader;
 live::RangeReader g_range_reader;
 live::PathReader g_path_reader;
 live::OperatorReader g_operator_reader;
+live::SpawnReader g_spawn_reader;
+live::SpawnSchedule g_spawns;
+std::mutex g_spawn_mutex;
+std::atomic<bool> g_spawns_enabled{false};
+std::uint64_t g_spawn_attempt_ms = 0;
 std::atomic<bool> g_range_enabled{false};
 std::atomic<bool> g_operator_enabled{false};
 OperatorPayload g_operators;
@@ -1017,6 +1023,7 @@ void update_paths(il2cpp::Runtime& runtime, const DetourState& state, void* cont
     std::string failure = "route budget expired before first target";
     for (; processed < request.count && budget.available(); ++processed) {
         const auto id = request.ids[(begin+processed) % request.count];
+        const bool spawn=ipc::is_spawn_path(id);
         int target = -1;
         for (std::uint32_t u = 0; u < units.count; ++u) if (units.items[u].tracking_id == id) target = static_cast<int>(u);
         std::uint32_t slot = output.count;
@@ -1025,24 +1032,29 @@ void update_paths(il2cpp::Runtime& runtime, const DetourState& state, void* cont
             output.items[slot] = output.items[--output.count];
             slot = output.count;
         }
-        if (target < 0 || !unit_objects[target]) { failure = "requested enemy is not in the current unit sample"; continue; }
+        if (!spawn && (target < 0 || !unit_objects[target])) { failure = "requested enemy is not in the current unit sample"; continue; }
         PathSample sample;
         sample.tracking_id = id; sample.battle_serial = state.serial; sample.sampled_ms = projected_ms;
         path_geometry::Point ground;
         path_geometry::Route route;
         try {
-            if (!g_range_reader.foot(runtime, unit_objects[target], ground)) {
-                failure = "current enemy ground getter unavailable"; continue;
+            if(spawn) {
+                if(!g_path_reader.read_spawn(runtime,controller,ipc::spawn_path_route(id),route,sample.route_revision,
+                    [&]{return budget.available();})){failure=g_path_reader.reason();continue;}
+            } else {
+                if (!g_range_reader.foot(runtime, unit_objects[target], ground)) {
+                    failure = "current enemy ground getter unavailable"; continue;
+                }
+                range_geometry::Point2 projected_ground;
+                if (range_geometry::project(projection.view, projection.projection,
+                    range_geometry::world(projection.plane, ground), projected_ground)) {
+                    auto& unit = units.items[target];
+                    unit.ground_x = projected_ground.x; unit.ground_y = projected_ground.y;
+                    unit.flags |= ipc::kUnitGroundValid;
+                }
+                if (!g_path_reader.read(runtime, unit_objects[target], ground, route, sample.route_revision,
+                                        [&] { return budget.available(); })) { failure = g_path_reader.reason(); continue; }
             }
-            range_geometry::Point2 projected_ground;
-            if (range_geometry::project(projection.view, projection.projection,
-                range_geometry::world(projection.plane, ground), projected_ground)) {
-                auto& unit = units.items[target];
-                unit.ground_x = projected_ground.x; unit.ground_y = projected_ground.y;
-                unit.flags |= ipc::kUnitGroundValid;
-            }
-            if (!g_path_reader.read(runtime, unit_objects[target], ground, route, sample.route_revision,
-                                    [&] { return budget.available(); })) { failure = g_path_reader.reason(); continue; }
             for (std::uint32_t p = 0; p < route.count; ++p) {
                 range_geometry::Point2 point;
                 if (!range_geometry::project(projection.view, projection.projection,
@@ -1636,6 +1648,8 @@ void publish(DetourState& state, void* controller) {
             g_range_reader.clear();
             g_path_reader.clear();
             g_operator_reader.clear();
+            g_spawn_reader.clear();
+            g_spawn_attempt_ms = 0;
             {
                 std::unique_lock lock(g_operator_mutex, std::try_to_lock);
                 if (lock) g_operators = OperatorPayload{};
@@ -1697,6 +1711,18 @@ void publish(DetourState& state, void* controller) {
     }
 
     update_projection(state, controller);
+    if (g_runtime && battle_state == kBattleStateRunning &&
+        g_spawns_enabled.load(std::memory_order_relaxed) &&
+        (!g_spawn_attempt_ms || sample.updated_ms - g_spawn_attempt_ms >= 250)) {
+        g_spawn_attempt_ms = sample.updated_ms;
+        const auto& schedule = g_spawn_reader.read(*g_runtime, controller, sample.serial, sample.updated_ms);
+        std::unique_lock lock(g_spawn_mutex, std::try_to_lock);
+        if (lock) {
+            if (g_spawns.serial != schedule.serial || g_spawns.revision != schedule.revision)
+                g_spawns = schedule;
+            else g_spawns.sampled_ms = schedule.sampled_ms;
+        }
+    }
     update_units(state, controller);
 
 }
@@ -2204,6 +2230,10 @@ bool shutdown() {
     g_range_reader.clear();
     g_path_reader.clear();
     g_operator_reader.clear();
+    g_spawn_reader.clear();
+    g_spawn_attempt_ms = 0;
+    g_spawns_enabled.store(false, std::memory_order_relaxed);
+    { std::lock_guard lock(g_spawn_mutex); g_spawns = {}; }
     g_range_enabled.store(false, std::memory_order_relaxed);
     g_operator_enabled.store(false, std::memory_order_relaxed);
     g_operator_failure_serial = g_path_failure_serial = ~0u;
@@ -2316,6 +2346,18 @@ bool projection_diag(ProjectionDiag* out) {
 bool unit_api_available() { return g_units_published.load(std::memory_order_acquire); }
 
 void set_range_enabled(bool enabled) { g_range_enabled.store(enabled, std::memory_order_relaxed); }
+
+void set_spawns_enabled(bool enabled) { g_spawns_enabled.store(enabled, std::memory_order_relaxed); }
+
+bool spawn_snapshot(std::vector<Spawn>& out, std::uint32_t battle_serial) {
+    const auto now = GetTickCount64();
+    std::lock_guard lock(g_spawn_mutex);
+    if (!g_spawns_enabled.load(std::memory_order_relaxed) || !g_spawns.available ||
+        g_spawns.serial != battle_serial || !g_spawns.sampled_ms || g_spawns.sampled_ms > now ||
+        now - g_spawns.sampled_ms > 1000) return false;
+    out = g_spawns.spawns;
+    return true;
+}
 
 void set_operator_stats_enabled(bool enabled) { g_operator_enabled.store(enabled, std::memory_order_relaxed); }
 

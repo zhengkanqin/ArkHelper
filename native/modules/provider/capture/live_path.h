@@ -79,6 +79,63 @@ class PathReader {
         const auto bits = reinterpret_cast<std::uintptr_t>(identity);
         return (hash ^ static_cast<std::uint32_t>(bits) ^ static_cast<std::uint32_t>(bits >> 32)) * 16777619u;
     }
+    bool local_position(il2cpp::Runtime& rt,void* boxed,path_geometry::Point& result) {
+        void* getter=boxed?method(rt,rt.object_class(boxed),"get_asLocalPosition"):nullptr;
+        return getter && vector(rt,rt.invoke(getter,boxed),result);
+    }
+    template<class Budget>
+    bool walk(il2cpp::Runtime& rt,void* map,path_geometry::Point ground,path_geometry::Grid target,
+              path_geometry::Point target_pos,path_geometry::Point offset,path_geometry::Route& output,
+              std::uint32_t& revision,bool& reached,Budget&& within_budget) {
+        reached=false;
+        if(!map || rt.class_rank(rt.object_class(map))!=2)
+            return unavailable("current navigation map is missing or not rank two");
+        void* element=rt.class_element(rt.object_class(map));
+        if(!element || !rt.class_is_value(element) || std::strcmp(rt.class_name(element),"Node"))return false;
+        const Access ma=access(rt,rt.object_class(map)),na=access(rt,element);
+        if(!ma.array_get || !na.pos || !na.next || !na.has_next || !na.safe_position)
+            return unavailable("Node[,] indexer or navigation-node metadata unavailable");
+        if(!from_vector_)from_vector_=rt.method(rt.find("Torappu","GridPosition"),"FromVectorPosition",1,{"UnityEngine.Vector2"});
+        path_geometry::Grid position;
+        if(!grid(rt,rt.invoke(from_vector_,nullptr,{&ground}),position))
+            return unavailable("navigation position did not convert to GridPosition");
+        revision=mix(revision,map);
+        path_geometry::GridHistory visited;
+        int order=-1;
+        for(int steps=0;steps<1024;++steps) {
+            if(!within_budget() || !visited.visit(position)){output.truncated=true;return true;}
+            void* node=nullptr;
+            for(int attempt=0;attempt<2 && !node;++attempt) {
+                const int candidate_order=order>=0?order:attempt;
+                int first=candidate_order==0?position.row:position.col;
+                int second=candidate_order==0?position.col:position.row;
+                try {
+                    void* candidate=rt.invoke(ma.array_get,map,{&first,&second});
+                    path_geometry::Grid actual;
+                    if(candidate && rt.object_class(candidate)==element &&
+                        grid(rt,rt.field_get_object(na.pos,candidate),actual) && actual==position) {
+                        node=candidate;
+                        if(position.row!=position.col)order=candidate_order;
+                    }
+                } catch(...){}
+                if(order>=0)break;
+            }
+            if(!node)return unavailable("navigation node position does not match the requested grid");
+            if(position==target){reached=true;break;}
+            double has_next=0;
+            path_geometry::Grid next_grid;
+            path_geometry::Point next_pos;
+            if(!number(rt,rt.field_get_object(na.has_next,node),has_next) || !has_next ||
+                !grid(rt,rt.field_get_object(na.next,node),next_grid) || next_grid==position ||
+                !vector(rt,rt.invoke(na.safe_position,node),next_pos))
+                return unavailable("navigation node has no valid next grid or position");
+            if(!output.append({next_pos.x-offset.x,next_pos.y-offset.y}))return true;
+            position=next_grid;
+        }
+        if(!reached){output.truncated=true;return true;}
+        if(!output.append({target_pos.x-offset.x,target_pos.y-offset.y}))reached=false;
+        return true;
+    }
 public:
     void clear() { cache_ = {}; next_ = 0; from_vector_ = nullptr; reason_.clear(); }
     const std::string& reason() const { return reason_; }
@@ -177,65 +234,17 @@ public:
             }
             void* map = final_leg ? rt.field_get_object(route_access.target_map, route_object)
                                  : rt.field_get_object(cp.next_map, checkpoint);
-            if (!map || rt.class_rank(rt.object_class(map)) != 2 || !within_budget())
-                return unavailable("current navigation map is missing, not rank two, or over budget");
-            void* element = rt.class_element(rt.object_class(map));
-            // Next-map Node is the real navigation value type. Match structure as well as name.
-            if (!element || !rt.class_is_value(element) || std::strcmp(rt.class_name(element), "Node")) return false;
-            const Access ma = access(rt, rt.object_class(map));
-            const Access na = access(rt, element);
-            if (!ma.array_get || !na.pos || !na.next || !na.has_next || !na.safe_position)
-                return unavailable("Node[,] indexer or navigation-node metadata unavailable");
-            path_geometry::Grid position, target;
+            path_geometry::Grid target;
             path_geometry::Point target_pos;
-            if (!grid(rt, rt.invoke(from_vector_, nullptr, {&ground}), position))
-                return unavailable("current navigation position did not convert to GridPosition");
             if (final_leg) {
                 if (!grid(rt, end, target)) return unavailable("route end is not GridPosition");
                 target_pos = exit;
             } else if (!grid(rt, rt.invoke(cp.target_grid, checkpoint), target) ||
                        !vector(rt, rt.invoke(cp.target_pos, checkpoint), target_pos))
                 return unavailable("checkpoint target grid or position has unexpected type");
-            revision = mix(revision, map);
-            path_geometry::GridHistory visited;
             bool reached = false;
-            // Array indexing is checked by the managed runtime; Node.pos verifies row/column
-            // order before any node contributes geometry, including non-square maps.
-            int order = -1;
-            for (int steps = 0; steps < 1024; ++steps) {
-                if (!within_budget()) { output.truncated = true; return output.count > 1; }
-                if (!visited.visit(position)) { output.truncated = true; return output.count > 1; }
-                void* node = nullptr;
-                for (int attempt = 0; attempt < 2 && !node; ++attempt) {
-                    const int candidate_order = order >= 0 ? order : attempt;
-                    int first = candidate_order == 0 ? position.row : position.col;
-                    int second = candidate_order == 0 ? position.col : position.row;
-                    try {
-                        void* candidate = rt.invoke(ma.array_get, map, {&first, &second});
-                        path_geometry::Grid actual;
-                        if (candidate && rt.object_class(candidate) == element &&
-                            grid(rt, rt.field_get_object(na.pos, candidate), actual) && actual == position) {
-                            node = candidate;
-                            // A diagonal cell cannot distinguish [row,col] from [col,row].
-                            if (position.row != position.col) order = candidate_order;
-                        }
-                    } catch (...) {}
-                    if (order >= 0) break;
-                }
-                if (!node) return unavailable("navigation node position does not match the requested grid");
-                if (position == target) { reached = true; break; }
-                double has_next = 0;
-                path_geometry::Grid next_grid;
-                path_geometry::Point next_pos;
-                if (!number(rt, rt.field_get_object(na.has_next, node), has_next) || !has_next ||
-                    !grid(rt, rt.field_get_object(na.next, node), next_grid) || next_grid == position ||
-                    !vector(rt, rt.invoke(na.safe_position, node), next_pos))
-                    return unavailable("navigation node has no valid next grid or position");
-                if (!output.append(physical(next_pos))) return output.count > 1;
-                position = next_grid;
-            }
-            if (!reached) { output.truncated = true; return output.count > 1; }
-            if (!output.append(physical(target_pos))) return output.count > 1;
+            if(!walk(rt,map,ground,target,target_pos,offset,output,revision,reached,within_budget))return false;
+            if(!reached)return output.count>1;
             ground = target_pos;
         }
         if (disconnected) { output.truncated = true; return output.count > 1; }
@@ -244,6 +253,71 @@ public:
         if (!within_budget() || !have_exit ||
             !path_geometry::same(output.points[output.count-1].point, physical(exit))) output.truncated = true;
         return output.count > 1;
+    }
+
+    // Route previews read the map's existing route and navigation nodes only.
+    // They never create a cursor, generate a path or consume the game's random state.
+    template<class Budget>
+    bool read_spawn(il2cpp::Runtime& rt,void* controller,std::uint32_t route_index,
+                    path_geometry::Route& output,std::uint32_t& revision,Budget&& within_budget) {
+        reason_="spawn route metadata unavailable";
+        void* map=member(rt,controller,"_map");
+        void* routes=member(rt,map,"m_routes");
+        const int count=routes?rt.count(routes):0;
+        if(route_index>=static_cast<unsigned>(std::max(0,count)) || count>65536 || !within_budget())return false;
+        void* route=rt.at(routes,static_cast<int>(route_index));
+        void* data=member(rt,route,"m_data");
+        void* end=member(rt,data,"endPosition");
+        path_geometry::Point ground,exit,spawn_offset;
+        path_geometry::Grid exit_grid;
+        if(!local_position(rt,member(rt,data,"startPosition"),ground) ||
+           !local_position(rt,end,exit) || !grid(rt,end,exit_grid) ||
+           !vector(rt,member(rt,data,"spawnOffset"),spawn_offset))return false;
+        ground={ground.x+spawn_offset.x,ground.y+spawn_offset.y};
+        if(!output.append(ground,true))return false;
+        revision=mix(2166136261u,route);
+        void* checkpoints=member(rt,data,"checkpoints");
+        void* maps=member(rt,route,"m_checkpointsNextMap");
+        const int size=checkpoints?rt.count(checkpoints):0;
+        if(size<0 || size>256)return false;
+        bool disconnected=false;
+        for(int i=0;i<=size;++i) {
+            if(!within_budget()){output.truncated=true;return output.count>1;}
+            const bool final=i==size;
+            void* checkpoint=final?nullptr:rt.at(checkpoints,i);
+            if(!final && !checkpoint)return false;
+            const auto type=final?"MOVE":enum_name(rt,member(rt,checkpoint,"type"));
+            if(type=="DISAPPEAR"){disconnected=true;continue;}
+            if(type=="WAIT_FOR_SECONDS" || type=="WAIT_FOR_PLAY_TIME" || type=="WAIT_CURRENT_FRAGMENT_TIME" ||
+               type=="WAIT_CURRENT_WAVE_TIME" || type=="WAIT_BOSSRUSH_WAVE" || type=="ALERT")continue;
+            if(type=="PATROL_MOVE"){output.truncated=true;return output.count>1;}
+            if(type!="MOVE" && type!="APPEAR_AT_POS")return unavailable("unsupported spawn route checkpoint");
+            path_geometry::Grid target=exit_grid;
+            path_geometry::Point position=exit,reach_offset{};
+            if(!final) {
+                bool known=true;
+                if(optional_bool(rt,checkpoint,"randomizeReachOffset",false,known) || !known)
+                    return unavailable("random checkpoint target is not determined before spawn");
+                void* boxed=member(rt,checkpoint,"position");
+                if(!grid(rt,boxed,target) || !local_position(rt,boxed,position) ||
+                   !vector(rt,member(rt,checkpoint,"reachOffset"),reach_offset))return false;
+                position={position.x+reach_offset.x,position.y+reach_offset.y};
+            }
+            if(type=="APPEAR_AT_POS") {
+                if(!output.append(position,true))return output.count>1;
+                ground=position;disconnected=false;continue;
+            }
+            if(disconnected)return false;
+            void* next_map=nullptr;
+            if(final)next_map=member(rt,route,"m_targetNextMap");
+            else if(maps && i<rt.count(maps))next_map=rt.at(maps,i);
+            bool reached=false;
+            if(!walk(rt,next_map,ground,target,position,{},output,revision,reached,within_budget))return false;
+            if(!reached)return output.count>1;
+            ground=position;
+        }
+        if(disconnected || !path_geometry::same(ground,exit))output.truncated=true;
+        return output.count>1;
     }
 };
 } // namespace ark::arkhelper::capture::live

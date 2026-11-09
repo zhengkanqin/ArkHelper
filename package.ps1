@@ -1,7 +1,7 @@
 <# .SYNOPSIS Builds and packages the complete portable ArkHelper application. #>
 [CmdletBinding()]
 param(
-    [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+$')][string]$Version = '1.4.0',
+    [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+$')][string]$Version = '1.4.1',
     [switch]$SkipTests
 )
 $ErrorActionPreference = 'Stop'
@@ -45,11 +45,14 @@ foreach ($entry in $files.GetEnumerator()) {
 Copy-Item -LiteralPath (Join-Path $InputDirectory 'data') -Destination (Join-Path $Payload 'data') -Recurse
 Get-ChildItem -LiteralPath (Join-Path $Root 'packaging') | Where-Object Name -ne 'README.txt' |
     Copy-Item -Destination $Payload -Recurse -Force
+$ipcHeader = Get-Content -LiteralPath (Join-Path $Root 'include/arkhelp/ipc.h') -Raw
+if ($ipcHeader -notmatch 'kVersion\s*=\s*(\d+)\s*;') { throw 'IPC version not found.' }
+$ipcVersion = [int]$Matches[1]
 $manifest = [ordered]@{
     product = 'ArkHelper'
     version = $Version
     architecture = 'windows-x64'
-    ipc_version = 9
+    ipc_version = $ipcVersion
     stage_overview_version = 1
     files = @(Get-ChildItem -LiteralPath $Payload -Recurse -File | Sort-Object FullName | ForEach-Object {
         [ordered]@{

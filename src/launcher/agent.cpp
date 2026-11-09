@@ -3,6 +3,7 @@
 #include <shellapi.h>
 #include "processes.h"
 #include "agent_protocol.h"
+#include "mouse_relay_server.h"
 #include <sddl.h>
 #include <cwchar>
 #include <cstdio>
@@ -216,6 +217,9 @@ int arkhelp_agent_main() {
     std::filesystem::create_directories(root / L"runtime/logs");
     auto* descriptor = command_security();
     SECURITY_ATTRIBUTES security{sizeof(security), descriptor, FALSE};
+    MouseRelayServer mouse_relay;
+    if (!game_launch_disabled() && descriptor && !mouse_relay.start(&security))
+        log(root,"mouse observation relay unavailable: "+std::to_string(GetLastError()));
     HANDLE request_mutex = descriptor ? CreateMutexW(&security, FALSE, kRequestMutex) : nullptr;
     HANDLE mapping = request_mutex ? CreateFileMappingW(INVALID_HANDLE_VALUE, &security, PAGE_READWRITE,
         0, sizeof(LaunchRequest), kLaunchMapping) : nullptr;

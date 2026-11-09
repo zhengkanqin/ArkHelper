@@ -41,7 +41,7 @@ public:
         request_count_=0;
         const auto hovered=hovered_enemies(snapshot,pointer,scale);
         for(auto& item:playing_) if(item.id) {
-            bool alive=false;
+            bool alive=ipc::is_spawn_path(item.id);
             for(std::uint32_t i=0;i<std::min(snapshot.unit_count,ipc::kMaxUnits);++i)
                 if(snapshot.units[i].tracking_id==item.id && (snapshot.units[i].flags&ipc::kUnitValid)) alive=true;
             if(!alive) item=Playback{};
@@ -63,7 +63,8 @@ public:
             const ipc::UnitEntry* unit=nullptr;
             for(std::uint32_t i=0;i<std::min(snapshot.unit_count,ipc::kMaxUnits);++i)
                 if(snapshot.units[i].tracking_id==item.id && (snapshot.units[i].flags&ipc::kUnitValid)) unit=&snapshot.units[i];
-            if(!unit) { item=Playback{}; continue; }
+            const bool spawn=ipc::is_spawn_path(item.id);
+            if(!unit && !spawn) { item=Playback{}; continue; }
             {
                 for(std::uint32_t i=0;i<std::min(snapshot.path_count,ipc::kMaxPaths);++i) {
                     const auto& path=snapshot.paths[i];
@@ -87,7 +88,7 @@ public:
                     break;
                 }
             }
-            if(item.ready) {
+            if(item.ready && unit) {
                 consume(item,*unit,scale);
                 item.progress=std::max(item.progress,item.consumed);
             }
@@ -127,6 +128,26 @@ public:
             float d=distance(unit.x,unit.y);
             if(unit.flags&ipc::kUnitGroundValid) d=std::min(d,distance(unit.ground_x,unit.ground_y));
             if(d<=radius_squared && !result.contains(unit.tracking_id)) result.ids[result.count++]=unit.tracking_id;
+        }
+        // A gate can have several routes in its next batch. Match their actual
+        // projected entrance and earliest pending frame, including all ties.
+        const auto count=std::min(snapshot.spawn_count,ipc::kMaxSpawns);
+        for(std::uint32_t i=0;i<count && result.count<result.ids.size();++i) {
+            const auto& spawn=snapshot.spawns[i];
+            if(!(spawn.flags&ipc::kSpawnScreenValid) || (spawn.flags&ipc::kSpawnRandom) ||
+                !std::isfinite(spawn.remaining_seconds) || spawn.remaining_seconds<0) continue;
+            const float dx=pointer.x-spawn.screen.x,dy=pointer.y-spawn.screen.y;
+            if(dx*dx+dy*dy>radius_squared)continue;
+            auto first=spawn.planned_frame;
+            for(std::uint32_t j=0;j<count;++j) {
+                const auto& other=snapshot.spawns[j];
+                if((other.flags&ipc::kSpawnScreenValid) && !(other.flags&ipc::kSpawnRandom) &&
+                    std::isfinite(other.remaining_seconds) && other.remaining_seconds>=0 &&
+                    std::abs(other.screen.x-spawn.screen.x)<=2 && std::abs(other.screen.y-spawn.screen.y)<=2)
+                    first=std::min(first,other.planned_frame);
+            }
+            const auto id=ipc::spawn_path_id(spawn.route_index);
+            if(spawn.planned_frame==first && id && !result.contains(id))result.ids[result.count++]=id;
         }
         return result;
     }

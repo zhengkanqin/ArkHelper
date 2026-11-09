@@ -38,7 +38,9 @@ private:
 // loaded) is not an error: poll() returns false and the overlay simply renders nothing.
 class BattleClient {
 public:
-    // Returns true only when a consistent, version matching snapshot was copied into `out`.
+    explicit BattleClient(const wchar_t* name = kBattleMappingName) : name_(name) {}
+    // Brief writer collisions reuse the last coherent snapshot for at most 200 ms,
+    // preserving its publication time and refusing changed battle identities/states.
     bool poll(BattleSnapshot& out);
     void close();
     bool connected() const { return mapping_.mapped(); }
@@ -46,11 +48,16 @@ public:
 private:
     MappingView mapping_;
     std::uint64_t next_open_ms_ = 0;
+    const wchar_t* name_;
+    BattleSnapshot last_{};
+    std::uint64_t last_read_ms_ = 0;
+    bool have_last_ = false;
 };
 
 // Polls the shell-owned command payload (feature switches, card index, UI scale).
 class CommandClient {
 public:
+    explicit CommandClient(const wchar_t* name = kCommandMappingName) : name_(name) {}
     bool poll(CommandState& out);
     void close();
     bool connected() const { return mapping_.mapped(); }
@@ -58,6 +65,10 @@ public:
 private:
     MappingView mapping_;
     std::uint64_t next_open_ms_ = 0;
+    const wchar_t* name_;
+    CommandState last_{};
+    std::uint64_t last_read_ms_ = 0;
+    bool have_last_ = false;
 };
 
 }  // namespace arkhelp::ipc

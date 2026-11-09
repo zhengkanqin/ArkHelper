@@ -58,11 +58,17 @@ Class node_array{"Node[,]","Torappu.Battle",2,0,&node_class};
 Class route_class{"Route","Torappu.Battle"};
 Class data_class{"RouteData","Torappu"};
 Class exit_class{"RouteExit","Torappu"};
+Class controller_class{"BattleController","Torappu.Battle"}, map_class{"Map","Torappu.Battle"};
+Class routes_class{"Route[]","Torappu.Battle",1}, maps_class{"Node[,][]","Torappu.Battle",1};
+Class cp_data_class{"CheckpointData",""};
 Field enemy_cursor{"m_cursor"}, cursor_index{"m_cursor"}, checkpoints_field{"m_checkpoints"};
 Field cursor_object{"m_obj"};
 Field offset_field{"m_offset"}, route_field{"m_route"}, map_field{"m_nextmap"};
 Field node_pos{"pos"}, node_next{"next"}, node_has_next{"hasNext"};
 Field route_data{"data"}, end_position{"endPosition"}, final_map{"m_targetNextMap"}, move_enum{"MOVE"};
+Field controller_map{"_map"}, map_routes{"m_routes"}, preview_data{"m_data"}, preview_maps{"m_checkpointsNextMap"};
+Field start_position{"startPosition"}, spawn_offset{"spawnOffset"}, data_checkpoints{"checkpoints"};
+Field cp_type{"type"}, cp_position{"position"}, cp_offset{"reachOffset"}, cp_random{"randomizeReachOffset"};
 unsigned checks = 0, failures = 0;
 void check(bool condition,const char* description) {
     ++checks;
@@ -142,9 +148,14 @@ struct Fixture {
     Box<int> index{integer,0}, move{checkpoint_type,0};
     Box<pg::Point> offset{vector2,{}}, map_position{vector2,{}}, cp1_target{vector2,{2,3}}, cp2_target{vector2,{3,4}};
     Box<pg::Grid> cp1_grid{grid,{3,2}}, cp2_grid{grid,{4,3}}, converted{grid,{}};
+    Box<pg::Grid> start_grid{grid,{2,1}};
+    Box<pg::Point> local_converted{vector2,{}}, zero{vector2,{}};
+    Box<bool> no_random{boolean,false};
     Object enemy{&enemy_class}, cursor{&cursor_class}, visual{&visual_class}, checkpoints{&checkpoint_array};
     Object cp1{&checkpoint_class}, cp2{&checkpoint_class}, map1{&node_array}, map2{&node_array}, map3{&node_array};
     Object route{&route_class}, data{&data_class}, end{&exit_class};
+    Object controller{&controller_class}, map{&map_class}, routes{&routes_class}, maps{&maps_class};
+    Object cp_data1{&cp_data_class},cp_data2{&cp_data_class},preview_checkpoints{&checkpoint_array};
     std::vector<pg::Point> lookups;
     std::vector<pg::Grid> indexed;
     unsigned host_position_reads = 0;
@@ -175,18 +186,28 @@ struct Fixture {
     }
     Fixture() {
         for (auto* klass : {&integer,&boolean,&vector2,&grid,&checkpoint_type,&enemy_class,&cursor_class,&visual_class,
-             &checkpoint_class,&checkpoint_array,&node_class,&node_array,&route_class,&data_class,&exit_class}) {
+             &checkpoint_class,&checkpoint_array,&node_class,&node_array,&route_class,&data_class,&exit_class,
+             &controller_class,&map_class,&routes_class,&maps_class,&cp_data_class}) {
             klass->fields.clear(); klass->methods.clear();
         }
         enemy_class.fields = {&enemy_cursor};
         cursor_class.fields = {&cursor_index,&checkpoints_field,&offset_field,&route_field,&cursor_object};
         checkpoint_class.fields = {&map_field}; node_class.fields = {&node_pos,&node_next,&node_has_next};
-        checkpoint_type.fields = {&move_enum}; route_class.fields = {&route_data,&final_map}; data_class.fields = {&end_position};
+        checkpoint_type.fields = {&move_enum}; route_class.fields = {&route_data,&final_map,&preview_data,&preview_maps};
+        data_class.fields = {&end_position,&start_position,&spawn_offset,&data_checkpoints};
+        controller_class.fields={&controller_map};map_class.fields={&map_routes};
+        cp_data_class.fields={&cp_type,&cp_position,&cp_offset,&cp_random};
         enemy.fields = {{&enemy_cursor,&cursor}};
         cursor.fields = {{&cursor_index,&index.object},{&checkpoints_field,&checkpoints},{&cursor_object,&visual},
                          {&offset_field,&offset.object},{&route_field,&route}};
         checkpoints.items = {&cp1,&cp2}; cp1.fields = {{&map_field,&map1}}; cp2.fields = {{&map_field,&map2}};
-        route.fields = {{&route_data,&data},{&final_map,&map3}}; data.fields = {{&end_position,&cp2_grid.object}};
+        route.fields = {{&route_data,&data},{&final_map,&map3},{&preview_data,&data},{&preview_maps,&maps}};
+        data.fields = {{&end_position,&cp2_grid.object},{&start_position,&start_grid.object},
+                       {&spawn_offset,&zero.object},{&data_checkpoints,&preview_checkpoints}};
+        controller.fields={{&controller_map,&map}};map.fields={{&map_routes,&routes}};routes.items={&route};
+        maps.items={&map1,&map2};preview_checkpoints.items={&cp_data1,&cp_data2};
+        cp_data1.fields={{&cp_type,&move.object},{&cp_position,&cp1_grid.object},{&cp_offset,&zero.object},{&cp_random,&no_random.object}};
+        cp_data2.fields={{&cp_type,&move.object},{&cp_position,&cp2_grid.object},{&cp_offset,&zero.object},{&cp_random,&no_random.object}};
         for (auto* map : {&map1,&map2,&map3}) { map->rows = 5; map->cols = 6; map->items.resize(30); }
         add_node(map1,{2,1},{2,2},true); add_node(map1,{2,2},{3,2},true); add_node(map1,{3,2},{3,2},false);
         add_node(map2,{3,2},{3,3},true); add_node(map2,{3,3},{4,3},true); add_node(map2,{4,3},{4,3},false);
@@ -200,6 +221,9 @@ struct Fixture {
             ++host_position_reads; return &map_position.object;
         });
         add_method(checkpoint_array,"GetValue",{"System.Int32"},false,[](void* receiver,void** arguments) -> void* {
+            return static_cast<Object*>(receiver)->items.at(*static_cast<int*>(arguments[0]));
+        });
+        for(auto* klass:{&routes_class,&maps_class})add_method(*klass,"GetValue",{"System.Int32"},false,[](void* receiver,void** arguments)->void* {
             return static_cast<Object*>(receiver)->items.at(*static_cast<int*>(arguments[0]));
         });
         add_method(node_array,"GetValue",{"System.Int32","System.Int32"},false,[this](void* receiver,void** arguments) -> void* {
@@ -219,7 +243,10 @@ struct Fixture {
         add_method(node_class,"GetSafeNextPosition",{},false,[](void* unboxed,void**) -> void* {
             return static_cast<NodePayload*>(unboxed)->safe_position;
         });
-        add_method(grid,"get_asLocalPosition",{},false,[this](void*,void**) -> void* { return &cp2_target.object; });
+        add_method(grid,"get_asLocalPosition",{},false,[this](void* payload,void**) -> void* {
+            const auto position=*static_cast<pg::Grid*>(payload);
+            local_converted.value={float(position.col),float(position.row)};return &local_converted.object;
+        });
     }
 };
 
@@ -283,6 +310,24 @@ void remaining_route() {
     check(!reader.read(rt,&f.enemy,f.map_position.value,route,revision,[]{return true;}),
           "missing final navigation map is never replaced by a guessed straight line");
 }
+void spawn_route() {
+    Fixture f;ark::il2cpp::Runtime rt;configure(rt);live::PathReader reader;
+    pg::Route route;std::uint32_t revision=0;
+    const auto read=[&]{route={};return reader.read_spawn(rt,&f.controller,0,route,revision,[]{return true;});};
+    check(read() && route.count==5 && !route.truncated && pg::same(route.points[0].point,{1,2}) &&
+        pg::same(route.points[2].point,{2,3}) && pg::same(route.points[4].point,{3,4}),
+        "red gate reads both checkpoints and actual navigation turns without an enemy cursor");
+    check(f.host_position_reads==0,"red gate preview does not query an enemy or create a cursor");
+    f.preview_checkpoints.items.clear();
+    check(read() && route.count==5 && !route.truncated,"red gate without checkpoints follows the real final next-map");
+    f.route.fields[1].second=nullptr;
+    check(!read(),"missing red gate navigation map is never guessed as a straight line");
+    f.route.fields[1].second=&f.map3;
+    check(!reader.read_spawn(rt,&f.controller,99,route,revision,[]{return true;}),"red gate route index is bounded by the current map");
+    f.preview_checkpoints.items={&f.cp_data1,&f.cp_data2};f.no_random.value=true;
+    check(!read(),"undetermined random checkpoint targets are not shown as exact routes");
+    route={};check(!reader.read_spawn(rt,&f.controller,0,route,revision,[]{return false;}),"red gate capture obeys the common frame budget");
+}
 }
 
 int main() {
@@ -291,6 +336,7 @@ int main() {
         run({.75f,-.6f},"nonzero offset production PathReader starts at the correct navigation node");
         run({-.6f,.75f},"opposite-sign offset production PathReader follows the same real route");
         remaining_route();
+        spawn_route();
     } catch (const std::exception& error) {
         ++checks; ++failures; std::printf("FAIL unexpected production Runtime exception: %s\n",error.what());
     }

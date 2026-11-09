@@ -1669,8 +1669,9 @@ LRESULT CALLBACK shared_mouse_proc(HWND hwnd, UINT message, WPARAM wparam, LPARA
     if (message == WM_TIMER && wparam == kSharedMouseTimer) {
         refresh_shared_cursor();
         if (g_shared_gesture) {
-            if (!(GetAsyncKeyState(VK_LBUTTON) & 0x8000) ||
-                GetAncestor(GetForegroundWindow(), GA_ROOT) != g_shared_source) cancel_shared_input();
+            // The broker may already have queued button-up while this thread is
+            // handling a timer. Let that ordered event finish the gesture.
+            if (GetAncestor(GetForegroundWindow(), GA_ROOT) != g_shared_source) cancel_shared_input();
         } else if (g_shared_hover) {
             POINT point{};
             GetCursorPos(&point);

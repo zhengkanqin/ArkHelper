@@ -235,8 +235,8 @@ public:
         Access& a = access(rt, rt.object_class(unit));
         std::uint32_t uid = 0;
         if (a.uid && rt.klass_name(rt.class_from_type(rt.field_type(a.uid))) == "System.UInt32") rt.field_get(unit, a.uid, &uid);
-        out.tracking_id = uid ? (static_cast<std::uint64_t>(serial) << 32u) | uid :
-                              reinterpret_cast<std::uintptr_t>(unit);
+        out.tracking_id = (uid ? (static_cast<std::uint64_t>(serial) << 32u) | uid :
+                               reinterpret_cast<std::uintptr_t>(unit)) & ~::arkhelp::ipc::kSpawnPathTag;
         if (a.key) {
             const std::string key = text(rt, rt.field_get_object(a.key, unit));
             std::snprintf(out.enemy_key, sizeof(out.enemy_key), "%s", key.c_str());

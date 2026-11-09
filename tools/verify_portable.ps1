@@ -1,7 +1,7 @@
 <# .SYNOPSIS Checks an extracted distribution in a path containing spaces and Chinese text. #>
 [CmdletBinding()]
 param(
-    [string]$PackageArchive = 'package/ArkHelper-1.4.0-windows-x64.zip',
+    [string]$PackageArchive = 'package/ArkHelper-1.4.1-windows-x64.zip',
     [string]$TestHost = 'build/package-input/runtime/ArkHelperRuntimeHost.exe'
 )
 $ErrorActionPreference = 'Stop'

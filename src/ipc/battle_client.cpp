@@ -60,35 +60,48 @@ bool BattleClient::poll(BattleSnapshot& out) {
             return false;
         }
         next_open_ms_ = now + kReopenIntervalMs;
-        mapping_.open(kBattleMappingName, sizeof(BattleSnapshot));
+        have_last_ = false;
+        mapping_.open(name_, sizeof(BattleSnapshot));
         if (!mapping_.mapped()) {
             return false;
         }
     }
     if (mapping_.bytes() < sizeof(BattleSnapshot)) {
+        have_last_ = false;
         mapping_.close();
         return false;
     }
     const auto* state = static_cast<const BattleSnapshot*>(mapping_.data());
     if (state->magic != kBattleMagic || state->version != kVersion) {
+        have_last_ = false;
         // A stale or foreign mapping: drop it and retry on a later frame.
         mapping_.close();
         next_open_ms_ = now + kReopenIntervalMs;
         return false;
     }
     if (state->size < sizeof(BattleSnapshot)) {
+        have_last_ = false;
         return false;
     }
     if (!read_snapshot(*state, out)) {
+        // Keep a complete sample across a brief writer collision. Its original
+        // publication timestamp still controls freshness in every drawing feature.
+        if (have_last_ && now >= last_read_ms_ && now-last_read_ms_ <= 200 &&
+            state->battle_serial == last_.battle_serial && state->in_battle == last_.in_battle &&
+            state->battle_state == last_.battle_state) { out = last_; return true; }
+        have_last_ = false;
         return false;
     }
-    if (out.magic != kBattleMagic || out.version != kVersion) {
+    if (out.magic != kBattleMagic || out.version != kVersion || out.size < sizeof(BattleSnapshot)) {
+        have_last_ = false;
         return false;
     }
+    last_ = out; last_read_ms_ = now; have_last_ = true;
     return true;
 }
 
 void BattleClient::close() {
+    have_last_ = false;
     mapping_.close();
     next_open_ms_ = 0;
 }
@@ -100,27 +113,38 @@ bool CommandClient::poll(CommandState& out) {
             return false;
         }
         next_open_ms_ = now + kReopenIntervalMs;
-        mapping_.open(kCommandMappingName, sizeof(CommandState));
+        have_last_ = false;
+        mapping_.open(name_, sizeof(CommandState));
         if (!mapping_.mapped()) {
             return false;
         }
     }
     const auto* state = static_cast<const CommandState*>(mapping_.data());
     if (state->magic != kCommandMagic || state->version != kVersion) {
+        have_last_ = false;
         mapping_.close();
         next_open_ms_ = now + kReopenIntervalMs;
         return false;
     }
     if (state->size < sizeof(CommandState)) {
+        have_last_ = false;
         return false;
     }
     if (!read_commands(*state, out)) {
+        if (have_last_ && now >= last_read_ms_ && now-last_read_ms_ <= 200 &&
+            state->revision == last_.revision) { out = last_; return true; }
+        have_last_ = false;
         return false;
     }
-    return out.magic == kCommandMagic && out.version == kVersion;
+    if (out.magic != kCommandMagic || out.version != kVersion || out.size < sizeof(CommandState)) {
+        have_last_ = false; return false;
+    }
+    last_ = out; last_read_ms_ = now; have_last_ = true;
+    return true;
 }
 
 void CommandClient::close() {
+    have_last_ = false;
     mapping_.close();
     next_open_ms_ = 0;
 }

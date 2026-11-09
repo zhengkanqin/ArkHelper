@@ -17,12 +17,14 @@ Get-ChildItem -LiteralPath (Join-Path $root 'data') | Copy-Item -Destination $re
 $reviews = @('ui_ball_review', 'ui_menu_review')
 if ($SharedMouse) { $reviews += 'ui_shared_mouse_review' }
 foreach ($name in $reviews) {
+    $inputFlags = @()
+    if ($name -eq 'ui_shared_mouse_review') { $inputFlags += '-DARKHELP_MOUSE_RELAY_SUFFIX=L".MouseReview"' }
     $executable = Join-Path $output ($name + '.exe')
-    & $zig c++ -target x86_64-windows-gnu -std=c++20 -O2 -DNOMINMAX -DUNICODE -D_UNICODE -DWIN32_LEAN_AND_MEAN `
+    & $zig c++ @inputFlags -target x86_64-windows-gnu -std=c++20 -O2 -DNOMINMAX -DUNICODE -D_UNICODE -DWIN32_LEAN_AND_MEAN `
         ('-I' + (Join-Path $root 'include')) ('-I' + (Join-Path $root 'src')) `
         (Join-Path $root "tests/$name.cpp") (Join-Path $root 'src/shell/win_util.cpp') `
         (Join-Path $root 'src/ui/shared_mouse_input.cpp') `
-        (Join-Path $root 'src/log/log.cpp') -luser32 -lgdi32 -lshell32 -lole32 -luuid `
+        (Join-Path $root 'src/log/log.cpp') -luser32 -lgdi32 -lshell32 -ladvapi32 -lole32 -luuid `
         -lwindowscodecs -lmsimg32 -ldwmapi -lshlwapi -lcomdlg32 -municode -o $executable
     if ($LASTEXITCODE -ne 0) { throw "UI review compile failed: $name" }
     & $executable $output

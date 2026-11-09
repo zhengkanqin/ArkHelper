@@ -154,6 +154,8 @@ if ($Target -eq 'Tests' -or ($Target -eq 'All' -and -not $SkipTests)) {
         @(Compile-All $Lifecycle) + $MinHookObjects + @(Compile-All @(Get-Sources 'native\modules\provider' -Recurse)) +
         @(Compile 'native\modules\common\il2cpp_runtime.cpp'; Compile 'src\ipc\ipc.cpp')) @('-luser32') -Wide
     Link (Join-Path $Tests 'ipc_tests.exe') @(Compile 'tests\ipc_tests.cpp'; Compile 'src\ipc\ipc.cpp') -Wide
+    Link (Join-Path $Tests 'snapshot_client_tests.exe') @(
+        Compile 'tests\snapshot_client_tests.cpp'; Compile 'src\ipc\battle_client.cpp'; Compile 'src\ipc\ipc.cpp')
     Link (Join-Path $Tests 'feature_command_gate_tests.exe') @(
         Compile 'tests\feature_command_gate_tests.cpp' '' @() @('src\shell\ipc_client.cpp')
         Compile 'src\ipc\ipc.cpp')
@@ -163,7 +165,7 @@ if ($Target -eq 'Tests' -or ($Target -eq 'All' -and -not $SkipTests)) {
     Link (Join-Path $Tests 'overlay_window_geometry_tests.exe') @(
         Compile 'tests\overlay_window_geometry_tests.cpp'; Compile 'src\features\features.cpp';
         Compile 'src\gfx\gfx.cpp'; Compile 'src\ipc\battle_client.cpp'; Compile 'src\ipc\ipc.cpp';
-        Compile 'src\log\log.cpp'; Compile 'src\shell\win_util.cpp') @(
+        Compile 'src\log\log.cpp'; Compile 'src\shell\win_util.cpp'; Compile 'src\ui\shared_mouse_input.cpp') @(
         '-luser32', '-lgdi32', '-ld2d1', '-ldwrite', '-lshell32', '-lole32', '-luuid',
         '-lwindowscodecs', '-lmsimg32', '-ldwmapi', '-lshlwapi', '-ladvapi32') -Wide
     Link (Join-Path $Tests 'range_projection_tests.exe') @(Compile 'tests\range_projection_tests.cpp')
@@ -175,6 +177,7 @@ if ($Target -eq 'Tests' -or ($Target -eq 'All' -and -not $SkipTests)) {
     Link (Join-Path $Tests 'prts_cache_tests.exe') @(
         Compile 'tests\prts_cache_tests.cpp'; Compile 'src\net\prts.cpp'; Compile 'src\net\prts_cache.cpp')
     Link (Join-Path $Tests 'path_animation_tests.exe') @(Compile 'tests\path_animation_tests.cpp')
+    Link (Join-Path $Tests 'mouse_relay_tests.exe') @(Compile 'tests\mouse_relay_tests.cpp')
     Link (Join-Path $Tests 'path_capture_tests.exe') @(Compile 'tests\path_capture_tests.cpp')
     Link (Join-Path $Tests 'operator_capture_tests.exe') @(
         Compile 'tests\operator_capture_tests.cpp'; Compile 'native\modules\common\il2cpp_runtime.cpp')
@@ -182,6 +185,8 @@ if ($Target -eq 'Tests' -or ($Target -eq 'All' -and -not $SkipTests)) {
         Compile 'tests\autochess_statistics_tests.cpp' '' @() @('native\modules\damage_meter\native_capture.cpp'))
     Link (Join-Path $Tests 'live_path_reader_tests.exe') @(
         Compile 'tests\live_path_reader_tests.cpp'; Compile 'native\modules\common\il2cpp_runtime.cpp')
+    Link (Join-Path $Tests 'live_spawn_reader_tests.exe') @(
+        Compile 'tests\live_spawn_reader_tests.cpp'; Compile 'native\modules\common\il2cpp_runtime.cpp')
     Link (Join-Path $Tests 'live_range_reader_tests.exe') @(
         Compile 'tests\live_range_reader_tests.cpp'; Compile 'native\modules\common\il2cpp_runtime.cpp')
     Link (Join-Path $Tests 'enemy_definition_tests.exe') @(
@@ -223,6 +228,7 @@ if ($Target -eq 'Tests' -or ($Target -eq 'All' -and -not $SkipTests)) {
     Run-Test 'builtin_module_tests'
     Run-Test 'production_statistics_tests'
     Run-Test 'ipc_tests'
+    Run-Test 'snapshot_client_tests'
     Run-Test 'feature_command_gate_tests'
     Run-Test 'enemy_publication_tests'
     Run-Test 'motion_predictor_tests'
@@ -235,10 +241,12 @@ if ($Target -eq 'Tests' -or ($Target -eq 'All' -and -not $SkipTests)) {
     Run-Test 'prts_client_tests'
     Run-Test 'prts_cache_tests'
     Run-Test 'path_animation_tests'
+    Run-Test 'mouse_relay_tests'
     Run-Test 'path_capture_tests'
     Run-Test 'operator_capture_tests'
     Run-Test 'autochess_statistics_tests'
     Run-Test 'live_path_reader_tests'
+    Run-Test 'live_spawn_reader_tests'
     Run-Test 'live_range_reader_tests'
     Run-Test 'enemy_definition_tests'
     Run-Test 'features_display_tests'
@@ -264,7 +272,7 @@ if ($Target -in @('All', 'App')) {
     $iconResource = Join-Path $Objects 'arkhelp.res'
     Invoke-Zig @('rc', '/fo', $iconResource, '/i', (Join-Path $Root 'resources'), (Join-Path $Root 'resources\arkhelp.rc'))
     $appSources = @(Get-Sources 'src' -Recurse | Where-Object { $_ -notmatch '\\launcher\\' })
-    $launcherSources = @(Get-Sources 'src\launcher' -Recurse) + @(Get-Sources 'native\loader')
+    $launcherSources = @(Get-Sources 'src\launcher' -Recurse) + @(Get-Sources 'native\loader') + @('src\ui\shared_mouse_input.cpp')
     Link (Join-Path $Dist 'ArkHelper.exe') (@(Compile-All $appSources) + @($iconResource)) @('-luser32', '-lgdi32', '-lshell32',
         '-ladvapi32', '-lole32', '-loleaut32', '-luuid', '-ld2d1', '-ldwrite', '-ldwmapi', '-lshlwapi', '-lcomctl32',
         '-lwinhttp', '-lwindowscodecs', '-lmsimg32', '-lcomdlg32') -Gui

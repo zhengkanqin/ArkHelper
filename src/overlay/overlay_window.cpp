@@ -14,6 +14,7 @@
 #include "../gfx/gfx.h"
 #include "../ipc/battle_client.h"
 #include "../log/log.h"
+#include "../ui/shared_mouse_input.h"
 #include "arkhelp/ipc.h"
 
 namespace arkhelp::overlay {
@@ -22,6 +23,7 @@ namespace {
 constexpr wchar_t kWindowClass[] = L"ArkHelpOverlayWindow";
 constexpr wchar_t kWindowTitle[] = L"ArkHelper Overlay";
 constexpr UINT kRefreshMessage = WM_APP + 0x41;
+constexpr UINT kMouseMessage = WM_APP + 0x42;
 constexpr UINT_PTR kTrackTimerId = 1;
 constexpr UINT_PTR kRenderTimerId = 2;
 constexpr UINT kTrackIntervalMs = 250;
@@ -84,7 +86,10 @@ features::UnitMotionPredictor g_unit_motion;
 features::PathAnimation g_paths;
 features::PointerState g_pointer;
 OverlayOptions g_options;
-bool g_mouse_down=false;
+SharedMouseInput g_mouse_input;
+std::deque<SharedMouseEvent> g_clicks;
+std::uint32_t g_input_serial = 0;
+bool g_input_failed = false;
 std::function<void(std::uint32_t,std::span<const std::uint64_t>)> g_path_request_callback;
 
 struct GameWindowSearch {
@@ -173,7 +178,9 @@ void hide_overlay() {
     g_unit_motion.reset();
     g_paths.invalidate_projection(GetTickCount64());
     g_pointer={};
-    g_mouse_down=(GetAsyncKeyState(VK_LBUTTON)&0x8000)!=0;
+    g_mouse_input.stop();
+    g_clicks.clear();
+    g_input_serial = 0;
     if(g_path_request_callback) g_path_request_callback(0,{});
     if (g_window != nullptr && g_visible) {
         ShowWindow(g_window, SW_HIDE);
@@ -499,8 +506,24 @@ void update_demo() {
                   static_cast<std::uint64_t>(now / 33));
 }
 
+void advance_paths(const ipc::BattleSnapshot& snapshot, float scale, std::uint64_t now,
+                   POINT origin, int width, int height, bool wants_clicks) {
+    for (const auto& click : g_clicks) {
+        if (!wants_clicks || !click.time || click.time > now || now - click.time > 500 ||
+            click.foreground != GetAncestor(g_game_window, GA_ROOT)) continue;
+        features::PointerState pointer{};
+        pointer.x = static_cast<float>(click.screen.x-origin.x);
+        pointer.y = static_cast<float>(click.screen.y-origin.y);
+        pointer.valid = pointer.x>=0 && pointer.y>=0 && pointer.x<width && pointer.y<height;
+        pointer.clicked = pointer.valid;
+        g_paths.update(snapshot,pointer,scale,now,width,height,g_options);
+    }
+    g_clicks.clear();
+    g_paths.update(snapshot,g_pointer,scale,now,width,height,g_options);
+}
+
 void update_live() {
-    const ULONGLONG now = GetTickCount64();
+    ULONGLONG now = GetTickCount64();
     const bool stale_window = !IsWindow(g_game_window);
     if (stale_window || ((!IsWindowVisible(g_game_window) || IsIconic(g_game_window) ||
          !game_is_foreground(g_game_window)) && now - g_last_window_scan_ms >= kTrackIntervalMs)) {
@@ -543,6 +566,9 @@ void update_live() {
     const bool have_snapshot = g_battle.poll(snapshot);
     ipc::CommandState commands = {};
     const bool have_commands = g_command.poll(commands);
+    // The provider can publish during either copy. Validate against the time
+    // after reading, so a newly arrived frame is not mistaken for future data.
+    now=GetTickCount64();
     if (!have_commands) {
         commands = {};
         commands.magic = ipc::kCommandMagic;
@@ -601,11 +627,21 @@ void update_live() {
         g_pointer.y=static_cast<float>(cursor.y-origin.y);
         g_pointer.valid=g_pointer.x>=0 && g_pointer.y>=0 && g_pointer.x<width && g_pointer.y<height;
     }
-    const bool mouse_down=(GetAsyncKeyState(VK_LBUTTON)&0x8000)!=0;
-    g_pointer.clicked=mouse_down && !g_mouse_down && g_pointer.valid;
-    g_mouse_down=mouse_down;
+    if (g_input_serial != snapshot.battle_serial) {
+        g_clicks.clear();
+        g_input_serial = snapshot.battle_serial;
+    }
+    const bool wants_clicks = (commands.feature_mask & ipc::kFeatureEnemyPaths) && g_options.path_on_click;
+    if (wants_clicks && !g_mouse_input.running() && !g_input_failed) {
+        if (!g_mouse_input.start(g_window, kMouseMessage)) {
+            g_input_failed = true;
+            log_error("path mouse input could not start, code=%lu", GetLastError());
+        }
+    } else if (!wants_clicks) {
+        g_mouse_input.stop(); g_clicks.clear(); g_input_failed = false;
+    }
     if(commands.feature_mask&ipc::kFeatureEnemyPaths) {
-        g_paths.update(snapshot,g_pointer,scale,now,width,height,g_options);
+        advance_paths(snapshot,scale,now,origin,width,height,wants_clicks);
         if(g_path_request_callback) g_path_request_callback(snapshot.battle_serial,g_paths.requests());
     } else {
         g_paths.reset();
@@ -712,6 +748,20 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             request_refresh();
             return 0;
         default:
+            if (message == kMouseMessage) {
+                bool clicked = false;
+                for (const auto& event : g_mouse_input.take()) {
+                    if (event.message == WM_CANCELMODE) g_clicks.clear();
+                    if (event.message == WM_LBUTTONDOWN && g_visible && g_options.path_on_click &&
+                        event.foreground == GetAncestor(g_game_window, GA_ROOT)) {
+                        if (g_clicks.size() >= 16) g_clicks.pop_front();
+                        g_clicks.push_back(event);
+                        clicked = true;
+                    }
+                }
+                if (clicked) request_refresh();
+                return 0;
+            }
             if (message == kRefreshMessage) {
                 InterlockedExchange(&g_refresh_pending, 0);
                 if (g_window == window) {
@@ -787,6 +837,10 @@ bool initialize(HINSTANCE instance) {
 }
 
 void shutdown() {
+    g_mouse_input.stop();
+    g_clicks.clear();
+    g_input_serial = 0;
+    g_input_failed = false;
     if (g_window != nullptr) {
         KillTimer(g_window, kTrackTimerId);
         KillTimer(g_window, kRenderTimerId);
@@ -839,7 +893,9 @@ void set_appearance(std::uint32_t feature, const FeatureAppearance& appearance) 
 }
 
 void set_options(const OverlayOptions& options) {
-    if(options.path_on_click!=g_options.path_on_click) g_paths.reset();
+    if(options.path_on_click!=g_options.path_on_click) {
+        g_paths.reset(); g_clicks.clear(); g_mouse_input.stop(); g_input_failed = false;
+    }
     g_options=options;
     ++g_widget_revision;
     request_refresh();
