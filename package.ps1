@@ -30,20 +30,21 @@ $files = [ordered]@{
     'runtime\ArkHelperRuntime.dll' = Join-Path $InputDirectory 'runtime\ArkHelperRuntime.dll'
     'runtime\ArkHelperBootstrap.dll' = Join-Path $InputDirectory 'runtime\ArkHelperBootstrap.dll'
     'LICENSE' = Join-Path $Root 'LICENSE'
+    'README.md' = Join-Path $Root 'README.md'
     'licenses\MinHook.txt' = Join-Path $Root 'third_party\minhook-1.3.4\LICENSE.txt'
     'licenses\LLVM-libcxx.txt' = Join-Path $Root 'third_party\toolchain-licenses\LLVM-libcxx.txt'
     'licenses\LLVM-libcxxabi.txt' = Join-Path $Root 'third_party\toolchain-licenses\LLVM-libcxxabi.txt'
     'licenses\LLVM-libunwind.txt' = Join-Path $Root 'third_party\toolchain-licenses\LLVM-libunwind.txt'
     'licenses\MinGW.txt' = Join-Path $Root 'third_party\toolchain-licenses\MinGW.txt'
     'licenses\Zig.txt' = Join-Path $Root 'third_party\toolchain-licenses\Zig.txt'
-    'licenses\Data-sources.md' = Join-Path $Root 'docs\data-sources.md'
 }
 foreach ($entry in $files.GetEnumerator()) {
     if (-not (Test-Path -LiteralPath $entry.Value)) { throw "Missing package input: $($entry.Value)" }
     Copy-Item -LiteralPath $entry.Value -Destination (Join-Path $Payload $entry.Key)
 }
 Copy-Item -LiteralPath (Join-Path $InputDirectory 'data') -Destination (Join-Path $Payload 'data') -Recurse
-Get-ChildItem -LiteralPath (Join-Path $Root 'packaging') | Copy-Item -Destination $Payload -Recurse -Force
+Get-ChildItem -LiteralPath (Join-Path $Root 'packaging') | Where-Object Name -ne 'README.txt' |
+    Copy-Item -Destination $Payload -Recurse -Force
 $manifest = [ordered]@{
     product = 'ArkHelper'
     version = $Version
@@ -74,9 +75,16 @@ if (Test-Path -LiteralPath $SourceRoot) {
     Remove-Item -LiteralPath $resolved -Recurse -Force
 }
 New-Item -ItemType Directory -Path $SourcePayload -Force | Out-Null
-foreach ($entry in @('src', 'native', 'include', 'tests', 'third_party', 'data', 'resources', 'tools', 'docs',
+foreach ($entry in @('src', 'native', 'include', 'tests', 'third_party', 'data', 'resources', 'tools',
     'packaging', 'build.ps1', 'verify.ps1', 'package.ps1', 'README.md', 'LICENSE', '.clang-format', '.gitignore', '.gitattributes')) {
     Copy-Item -LiteralPath (Join-Path $Root $entry) -Destination $SourcePayload -Recurse -Force
+}
+foreach ($relative in @('native/modules/provider/README.md', 'tests/prts/prts/README.md', 'packaging/README.txt')) {
+    $localNote = [IO.Path]::GetFullPath((Join-Path $SourcePayload $relative))
+    if (-not $localNote.StartsWith([IO.Path]::GetFullPath($SourcePayload).TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Unexpected source note path.'
+    }
+    if (Test-Path -LiteralPath $localNote) { Remove-Item -LiteralPath $localNote -Force }
 }
 $SourceArchive = Join-Path $PackageRoot "ArkHelper-$Version-source.zip"
 Compress-Archive -LiteralPath $SourcePayload -DestinationPath $SourceArchive -Force

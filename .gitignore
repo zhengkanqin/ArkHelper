@@ -7,6 +7,13 @@
 /config/
 /logs/
 /NOTICE.md
+/docs/
+/native/modules/provider/README.md
+/tests/prts/prts/README.md
+/packaging/README.txt
+*.md
+!/README.md
+!/third_party/**/README.md
 __pycache__/
 *.pdb
 *.o

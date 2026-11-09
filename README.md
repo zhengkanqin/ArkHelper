@@ -12,11 +12,11 @@
 
 ## 使用
 
-1. 从 [Releases](https://github.com/zhengkanqin/ArkHelper/releases/latest) 下载 Windows x64 程序包，完整解压到可写目录。
+公开发行暂缓。可按下文从源码构建，或使用已有的本地程序包。
+
+1. 将程序包完整解压到可写目录。
 2. 首次连接游戏前运行 `Install-agent.cmd`，完成一次管理员授权；移除后台组件可运行 `Uninstall-agent.cmd`。
 3. 启动 `ArkHelper.exe`，阅读首次使用说明并确认风险，通过悬浮球或托盘选择功能。可运行 `Create-shortcut.cmd` 创建快捷方式。
-
-说明窗须连续前台阅读**超过 10 秒**，主动勾选已知晓风险后才能确认；确认前不会自动启动游戏或连接采集。游戏运行时才绘制画面标记，战后数据面板保留供核对。部分特殊模式的信息可能不可用，缺失值显示“—”。
 
 ## 项目承诺与使用风险
 
@@ -36,10 +36,14 @@ pwsh ./verify.ps1      # 使用隔离测试宿主验证加载与启停
 pwsh ./package.ps1     # Release 构建、验证及程序/源码打包
 ```
 
-详细说明：[架构](docs/internalization.md) · [数据边界](docs/runtime-data.md) · [验收清单](docs/manual-validation.md) · [Framework 关联审计](docs/framework-separation-audit.md)。
-
 ## 许可与来源
 
-代码按 **GPL-3.0-or-later** 发布。部分底层代码改编自 ArkFramework；来源、修改及第三方许可见 [数据与组件来源](docs/data-sources.md) 和 [LICENSE](LICENSE)。发布程序须同时提供完整对应源码与构建脚本。
+代码按 **GPL-3.0-or-later** 发布，见 [LICENSE](LICENSE)。原生加载、Hook 生命周期、任务调度、IL2CPP 读取及伤害统计部分改编自 ArkFramework，保留原作者与贡献者的权利。本项目已内化桌面界面、运行时、动态关卡读取、统计、缓存与可视化，移除了玩法写入接口、外部游戏插件加载及未使用的框架功能，无需单独安装 ArkFramework。
+
+- 干员中文名辅助表来自 [ArknightsGameData](https://github.com/Kengxxiao/ArknightsGameData)。游戏数据与素材归其权利人所有，不分发完整关卡库、游戏客户端或程序集。
+- 敌人资料和头像按需查询 [PRTS Wiki](https://prts.wiki/)，其贡献者内容遵循 [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh)。`tests/prts/prts/source-*.wikitext` 是于 2026-11-07 录制的[源石虫](https://prts.wiki/w/源石虫)、[士兵](https://prts.wiki/w/士兵)、[霜星](https://prts.wiki/w/霜星)页面样本，其余两个样本为合成测试数据。
+- MinHook 源码与许可见 `third_party/minhook-1.3.4`；LLVM 运行库、MinGW 与 Zig 许可见 `third_party/toolchain-licenses`。程序包附带适用许可。
+
+再分发程序时须同时提供同版本完整对应源码、构建脚本及适用许可。
 
 上述承诺约束本项目的功能设计，不额外限制 GPL 接收者的使用、修改和再分发权利。PRTS 内容和游戏相关素材分别遵循其权利人的许可。
