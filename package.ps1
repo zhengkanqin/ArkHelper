@@ -1,7 +1,7 @@
 <# .SYNOPSIS Builds and packages the complete portable ArkHelper application. #>
 [CmdletBinding()]
 param(
-    [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+$')][string]$Version = '1.3.0',
+    [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+$')][string]$Version = '1.4.0',
     [switch]$SkipTests
 )
 $ErrorActionPreference = 'Stop'

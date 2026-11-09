@@ -20,7 +20,11 @@ int wmain(int argc, wchar_t** argv) {
         status.command_mapping = true;
         status.feature_mask = config.features;
         MenuCallbacks callbacks;
-        int cache_opened=0;
+        int cache_opened=0, launch_requested=0, shortcuts_created=0, environments_repaired=0;
+        callbacks.on_launch = [&] { ++launch_requested; };
+        callbacks.get_launch_busy = [] { return false; };
+        callbacks.on_create_shortcut = [&]() -> std::wstring { ++shortcuts_created;return {}; };
+        callbacks.on_repair_environment = [&]() -> std::wstring { ++environments_repaired;return {}; };
         callbacks.get_config = [&] { return config; };
         callbacks.get_status = [&]() -> const Status& { return status; };
         callbacks.get_feature_mask = [&] { return config.features; };
@@ -119,6 +123,15 @@ int wmain(int argc, wchar_t** argv) {
         save(L"menu-launch-error.bmp");
         if(g_menu.surface.height!=main_height) throw std::runtime_error("launch error changed menu height");
         status.launch_error.clear();
+        click_rect(g_menu.layout.launch_button,HitTarget::kLaunch);
+        if(launch_requested!=1) throw std::runtime_error("status-card launch retry is not clickable");
+        menu_open_settings();
+        click_rect(startup_button(2),HitTarget::kCreateShortcut);
+        click_rect(startup_button(3),HitTarget::kRepairEnvironment);
+        if(shortcuts_created!=1 || environments_repaired!=1)
+            throw std::runtime_error("integrated startup settings actions did not fire");
+        save(L"menu-startup-settings.bmp");
+        open_page(0);
         const HWND original = g_menu.hwnd;
         menu_open_config(ipc::kFeatureHpBars);
         save(L"menu-hp-paused.bmp");

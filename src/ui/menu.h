@@ -31,6 +31,9 @@ struct MenuCallbacks
     std::function<void(uint32_t bit, bool enabled)> on_feature_toggle;
     std::function<bool()> get_launch_busy;
     std::function<void()> on_launch;
+    std::function<std::wstring(const std::wstring&)> on_game_path;
+    std::function<std::wstring()> on_create_shortcut;
+    std::function<std::wstring()> on_repair_environment;
     std::function<void()> on_open_settings;
     std::function<Config()> get_config;
     std::function<void(int opacity_percent, bool commit)> on_opacity;

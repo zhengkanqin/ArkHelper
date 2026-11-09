@@ -196,6 +196,11 @@ if ($Target -eq 'Tests' -or ($Target -eq 'All' -and -not $SkipTests)) {
         Compile 'tests\game_launch_request_tests.cpp'; Compile 'src\shell\win_util.cpp';
         Compile 'src\log\log.cpp') @('-luser32', '-lgdi32', '-lshell32', '-lole32', '-luuid',
             '-lwindowscodecs', '-lmsimg32', '-ldwmapi', '-lshlwapi', '-ladvapi32') -Wide
+    Link (Join-Path $Tests 'startup_setup_tests.exe') @(
+        Compile 'tests\startup_setup_tests.cpp'; Compile 'src\game\startup_setup.cpp';
+        Compile 'src\log\log.cpp'; Compile 'src\shell\win_util.cpp') @(
+            '-luser32', '-lgdi32', '-lshell32', '-lole32', '-loleaut32', '-luuid',
+            '-lwindowscodecs', '-lmsimg32', '-ldwmapi', '-lshlwapi') -Wide
     $loaderProbeObjects = @(Compile-All @('native\loader\win32_utils.cpp',
         'native\loader\process_watch.cpp', 'native\loader\target.cpp',
         'native\loader\console.cpp', 'native\loader\load_report.cpp'))
@@ -240,6 +245,7 @@ if ($Target -eq 'Tests' -or ($Target -eq 'All' -and -not $SkipTests)) {
     Run-Test 'gfx_line_style_tests'
     Run-Test 'http_tests'
     Run-Test 'game_launch_request_tests'
+    Run-Test 'startup_setup_tests'
     Run-Test 'remote_export_resolution_tests'
     Run-Test 'window_thread_selection_tests'
     Run-Test 'statistics_persistence_tests'
@@ -260,7 +266,7 @@ if ($Target -in @('All', 'App')) {
     $appSources = @(Get-Sources 'src' -Recurse | Where-Object { $_ -notmatch '\\launcher\\' })
     $launcherSources = @(Get-Sources 'src\launcher' -Recurse) + @(Get-Sources 'native\loader')
     Link (Join-Path $Dist 'ArkHelper.exe') (@(Compile-All $appSources) + @($iconResource)) @('-luser32', '-lgdi32', '-lshell32',
-        '-ladvapi32', '-lole32', '-luuid', '-ld2d1', '-ldwrite', '-ldwmapi', '-lshlwapi', '-lcomctl32',
+        '-ladvapi32', '-lole32', '-loleaut32', '-luuid', '-ld2d1', '-ldwrite', '-ldwmapi', '-lshlwapi', '-lcomctl32',
         '-lwinhttp', '-lwindowscodecs', '-lmsimg32', '-lcomdlg32') -Gui
     Link (Join-Path $Dist 'ArkHelperLauncher.exe') (@(Compile-All $launcherSources) + @($iconResource)) @('-luser32', '-lshell32', '-ladvapi32') -Gui
     New-Item -ItemType Directory -Path (Join-Path $Dist 'data') -Force | Out-Null

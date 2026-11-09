@@ -1,12 +1,17 @@
 #include "game_launch.h"
 
 #include <cstring>
+#include <cstdlib>
+#include <cwctype>
+#include <filesystem>
+#include <fstream>
 #include <iterator>
 #include <string>
 #include <vector>
 
 #include "../shell/platform.h"
 #include "../launcher/agent_protocol.h"
+#include "../launcher/processes.h"
 
 #include "../log/log.h"
 #include "../shell/win_util.h"
@@ -32,6 +37,8 @@ LONG g_request_id = 0;
 LONG g_next_request_id = 0;
 LONG64 g_request_epoch = 0;
 ULONGLONG g_request_started = 0;
+ULONGLONG g_report_checked = 0;
+std::filesystem::file_time_type g_report_written{};
 
 void close_request()
 {
@@ -179,11 +186,90 @@ std::wstring detect_running_game_path()
     return search.path;
 }
 
+std::wstring registry_text(HKEY key, const wchar_t* name)
+{
+    DWORD type = 0, bytes = 0;
+    if (RegQueryValueExW(key, name, nullptr, &type, nullptr, &bytes) != ERROR_SUCCESS ||
+        (type != REG_SZ && type != REG_EXPAND_SZ) || bytes > 65536) return {};
+    std::vector<wchar_t> buffer(bytes / sizeof(wchar_t) + 1, L'\0');
+    if (RegQueryValueExW(key, name, nullptr, nullptr, reinterpret_cast<BYTE*>(buffer.data()), &bytes) != ERROR_SUCCESS)
+        return {};
+    if (type != REG_EXPAND_SZ) return buffer.data();
+    std::vector<wchar_t> expanded(32768);
+    const DWORD length = ExpandEnvironmentStringsW(buffer.data(), expanded.data(), static_cast<DWORD>(expanded.size()));
+    return length && length <= expanded.size() ? expanded.data() : std::wstring{};
+}
+
+std::wstring executable_in_command(std::wstring text)
+{
+    const auto first = text.find_first_not_of(L" \t");
+    if (first == std::wstring::npos) return {};
+    text.erase(0, first);
+    if (text.front() == L'"') {
+        const auto end = text.find(L'"', 1);
+        return end == std::wstring::npos ? std::wstring{} : text.substr(1, end - 1);
+    }
+    std::wstring lower = text;
+    for (auto& c : lower) c = std::towlower(c);
+    const auto end = lower.find(L".exe");
+    return end == std::wstring::npos ? std::wstring{} : text.substr(0, end + 4);
+}
+
+std::wstring game_under_install(const std::wstring& install)
+{
+    if (install.empty()) return {};
+    for (const auto* suffix : {L"Arknights.exe", L"games\\Arknights\\Arknights.exe", L"Arknights\\Arknights.exe"}) {
+        const auto candidate = join(install, suffix);
+        if (file_exists(candidate)) return candidate;
+    }
+    return {};
+}
+
+std::wstring detect_installed_game_path()
+{
+    for (HKEY hive : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE}) {
+        for (REGSAM view : {KEY_WOW64_64KEY, KEY_WOW64_32KEY}) {
+            HKEY uninstall = nullptr;
+            if (RegOpenKeyExW(hive, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall", 0,
+                    KEY_READ | view, &uninstall) != ERROR_SUCCESS) continue;
+            std::wstring found;
+            for (DWORD index = 0;; ++index) {
+                wchar_t name[256]{};
+                DWORD length = 256;
+                const LONG result = RegEnumKeyExW(uninstall, index, name, &length, nullptr, nullptr, nullptr, nullptr);
+                if (result == ERROR_NO_MORE_ITEMS) break;
+                if (result != ERROR_SUCCESS) continue;
+                HKEY product = nullptr;
+                if (RegOpenKeyExW(uninstall, name, 0, KEY_READ | view, &product) != ERROR_SUCCESS) continue;
+                auto display = registry_text(product, L"DisplayName");
+                for (auto& c : display) c = std::towlower(c);
+                if (display.find(L"鹰角") != display.npos || display.find(L"明日方舟") != display.npos ||
+                    display.find(L"hypergryph") != display.npos || display.find(L"arknights") != display.npos) {
+                    for (const auto* field : {L"InstallLocation", L"DisplayIcon", L"UninstallString"}) {
+                        auto location = registry_text(product, field);
+                        if (std::wcscmp(field, L"InstallLocation") != 0) {
+                            const auto executable = executable_in_command(location);
+                            location = executable.empty() ? L"" : parent_directory(executable);
+                        }
+                        found = game_under_install(location);
+                        if (!found.empty()) break;
+                    }
+                }
+                RegCloseKey(product);
+                if (!found.empty()) break;
+            }
+            RegCloseKey(uninstall);
+            if (!found.empty()) return found;
+        }
+    }
+    return {};
+}
+
 void resolve_paths()
 {
     const std::wstring exe_directory = module_directory();
     g_paths.launcher_exe = join(exe_directory, L"ArkHelperLauncher.exe");
-    g_paths.report = join(g_root_directory, L"logs\\launch-report.json");
+    g_paths.report = join(g_root_directory, L"runtime\\logs\\launch-report.json");
 
     // 所有加载能力都来自同目录的 ArkHelperLauncher.exe。
     g_paths.loader_exe.clear();
@@ -202,6 +288,7 @@ void resolve_paths()
     const std::wstring game_candidates[] = {
         g_paths.game_exe,
         detect_running_game_path(),
+        detect_installed_game_path(),
         L"C:\\Program Files\\Hypergryph\\games\\Arknights\\Arknights.exe",
     };
     for (const auto& candidate : game_candidates)
@@ -211,6 +298,43 @@ void resolve_paths()
             g_paths.game_exe = candidate;
             break;
         }
+    }
+    if (!file_exists(g_paths.game_exe)) g_last_error = L"未找到游戏，请在设置中选择 Arknights.exe";
+    else if (g_last_error == L"未找到游戏，请在设置中选择 Arknights.exe") g_last_error.clear();
+}
+
+std::wstring failure_from_report(const std::string& text)
+{
+    if (text.find("\"success\":false") == text.npos) return {};
+    if (text.find("entry_did_not_complete") != text.npos)
+        return L"采集入口未能运行；请退出游戏后由助手启动，再重试连接";
+    if (text.find("window_hook_timeout") != text.npos)
+        return L"游戏窗口未响应连接；请退出游戏后由助手启动";
+    if (text.find("core_missing") != text.npos)
+        return L"采集组件缺失，请完整解压程序包";
+    return L"采集连接失败，请点击重试；详情见 runtime/logs/launch-report.json";
+}
+
+void poll_connection_report()
+{
+    if (launcher::game_launch_disabled() || GetTickCount64() - g_report_checked < 1000) return;
+    g_report_checked = GetTickCount64();
+    std::error_code error;
+    const auto modified = std::filesystem::last_write_time(g_paths.report, error);
+    if (error || modified == g_report_written) return;
+    std::ifstream file(std::filesystem::path(g_paths.report), std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(file)), {});
+    const auto pid_key = text.find("\"pid\":");
+    if (pid_key == text.npos) return;
+    const auto pid = static_cast<DWORD>(std::strtoul(text.c_str() + pid_key + 6, nullptr, 10));
+    const auto running = launcher::process_ids_named(L"Arknights.exe");
+    if (std::find(running.begin(), running.end(), pid) == running.end()) return;
+    if (text.find("\"success\":true") != text.npos) {
+        g_last_error.clear();
+        g_report_written = modified;
+    } else if (text.find("\"success\":false") != text.npos) {
+        g_last_error = failure_from_report(text);
+        g_report_written = modified;
     }
 }
 
@@ -223,6 +347,9 @@ std::wstring quote(const std::wstring& value)
 
 void initialize(const std::wstring& root_directory, const Config& config)
 {
+    g_last_error.clear();
+    g_report_checked = 0;
+    g_report_written = {};
     g_root_directory = root_directory;
     g_paths.game_exe = config.game_path;
     g_paths.loader_exe = config.loader_path;
@@ -238,6 +365,7 @@ const Paths& paths()
 
 bool paths_ready()
 {
+    if (!file_exists(g_paths.game_exe)) resolve_paths();
     return file_exists(g_paths.game_exe) && file_exists(g_paths.loader_exe) && file_exists(g_paths.launcher_exe);
 }
 
@@ -261,7 +389,7 @@ bool request_launch()
         return false;
     }
     if (!paths_ready() || g_paths.game_exe.size() >= launcher::kGamePathCapacity) {
-        g_last_error = L"请检查 config/arkhelp.json 的 game_path，并保持程序文件夹完整。";
+        g_last_error = L"请在设置中选择 Arknights.exe，并保持程序文件夹完整";
         return false;
     }
     if (!agent_ready() && !watch_agent_present()) {
@@ -296,7 +424,7 @@ void poll()
         }
     }
     g_watch_active = agent_ready();
-    if (!g_busy) { return; }
+    if (!g_busy) { poll_connection_report(); return; }
     if (!g_request && !submit_request()) {
         if (GetTickCount64() - g_request_started >= 15000) {
             g_last_error = L"后台连接组件未响应启动请求。请查看 runtime/logs/agent.log；游戏保持原状。";
@@ -318,8 +446,9 @@ void poll()
         InterlockedCompareExchange(&g_request->request_id, 0, 0) == g_request_id) {
         const LONG code = InterlockedCompareExchange(&g_request->result, 0, 0);
         if (code != 0) {
-            g_last_error = L"后台启动或连接失败（错误代码 " + std::to_wstring(code) +
-                L"）。游戏保持原状，请查看 runtime/logs/launch-report.json。";
+            std::ifstream file(std::filesystem::path(g_paths.report), std::ios::binary);
+            g_last_error = failure_from_report(std::string((std::istreambuf_iterator<char>(file)), {}));
+            if (g_last_error.empty()) g_last_error = L"后台启动或连接失败（" + std::to_wstring(code) + L"），请点击重试";
             log_error("agent launch request failed: %ld", code);
         } else {
             g_last_error.clear();

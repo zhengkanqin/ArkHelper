@@ -28,6 +28,11 @@ void reply(arkhelp::launcher::LaunchRequest* request, LONG code) {
 }
 int wmain(int argc, wchar_t** argv) {
     if (argc == 2 && std::wcscmp(argv[1], L"--exit-fixture") == 0) { return 0; }
+    if (argc == 2 && std::wcscmp(argv[1], L"--discover") == 0) {
+        const auto path = arkhelp::game_launch::detect_installed_game_path();
+        std::printf("registered game: %s\n", arkhelp::wide_to_utf8(path).c_str());
+        return path.empty() ? 1 : 0;
+    }
     namespace gl = arkhelp::game_launch;
     namespace agent = arkhelp::launcher;
     using namespace arkhelp;
@@ -56,6 +61,24 @@ int wmain(int argc, wchar_t** argv) {
         std::filesystem::create_directories(fixture / L"游戏 空格");
         config.game_path = (fixture / L"游戏 空格/Arknights.exe").wstring();
         std::ofstream(std::filesystem::path(config.game_path)) << "not executable; IPC fixture only\n";
+        check(std::filesystem::path(gl::game_under_install((fixture / L"游戏 空格").wstring())).lexically_normal() ==
+                  std::filesystem::path(config.game_path).lexically_normal(),
+              "a custom Unicode game installation was not discovered");
+        std::filesystem::create_directories(fixture / L"启动器/games/Arknights");
+        const auto installed_game = fixture / L"启动器/games/Arknights/Arknights.exe";
+        std::ofstream(installed_game) << "registered launcher fixture";
+        check(std::filesystem::path(gl::game_under_install((fixture / L"启动器").wstring())).lexically_normal() ==
+                  installed_game.lexically_normal(),
+              "the launcher games directory was not discovered");
+        check(gl::game_under_install((fixture / L"不存在").wstring()).empty(), "a missing installation was accepted");
+        check(gl::executable_in_command(L"\"D:\\游戏 空格\\卸载.exe\" /remove") == L"D:\\游戏 空格\\卸载.exe",
+              "quoted registry uninstall command was not parsed");
+        check(gl::executable_in_command(L"D:\\游戏 空格\\Launcher.exe,0") == L"D:\\游戏 空格\\Launcher.exe",
+              "registry icon path with spaces was not parsed");
+        check(gl::failure_from_report(R"({"success":false,"stage":"entry_did_not_complete"})").find(L"采集入口") != std::wstring::npos,
+              "background connection failure was not explained");
+        check(gl::failure_from_report(R"({"success":true,"stage":"runtime_ready"})").empty(),
+              "successful background connection was reported as an error");
         if (!std::filesystem::exists(fake_launcher)) {
             std::ofstream(fake_launcher) << "not executable; IPC fixture only\n";
             created_launcher = true;

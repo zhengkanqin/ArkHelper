@@ -22,6 +22,7 @@
 #include "../data/operator_names.h"
 #include "../features/features.h"
 #include "../game/game_launch.h"
+#include "../game/startup_setup.h"
 #include "../log/log.h"
 #include "../overlay/overlay_window.h"
 #include "constants.h"
@@ -259,6 +260,7 @@ private:
     std::wstring config_dir_;
     std::wstring config_path_;
     std::wstring log_dir_;
+    std::wstring setup_error_;
 
     Status status_;
     CommandClient commands_;
@@ -412,8 +414,6 @@ int App::initialize(HINSTANCE instance)
         log_info("first-use risk notice declined or closed; game connection remains disabled");
         return 10;
     }
-    ready_mutex_ = CreateMutexW(nullptr, FALSE, constants::kReadyMutexName);
-    if (!ready_mutex_) return 2;
     (void)overlay::initialize(instance_);
     overlay::set_widget_config(config_.hp_only_paused, config_.spawn_only_paused, config_.range_only_paused);
     overlay::set_damage_config(config_.damage_metric_mask, config_.damage_merged,
@@ -424,6 +424,8 @@ int App::initialize(HINSTANCE instance)
 
     // 解析游戏/加载器/启动器路径；解析成功后写回配置，用户下次启动无需再猜路径。
     game_launch::initialize(root_path_, config_);
+    setup_error_ = startup::prepare(root_path_, false, !config_loaded);
+    if (!setup_error_.empty()) log_warn("startup environment unavailable: %s", wide_to_utf8(setup_error_).c_str());
     // 退出 ArkHelper 时通过命名事件让游戏内运行时自行关闭；启动时先复位，避免上次残留导致误停。
     runtime_stop_event_ = CreateEventW(nullptr, TRUE, FALSE, L"Local\\ArkHelp.RuntimeStop");
     if (runtime_stop_event_ != nullptr)
@@ -547,7 +549,25 @@ int App::initialize(HINSTANCE instance)
     };
     menu_callbacks.on_auto_launch = [this](bool enabled) {
         config_.auto_launch = enabled;
+        if (enabled && status_.game_process.empty()) auto_launch_attempted_ = false;
         save_config();
+    };
+    menu_callbacks.on_game_path = [this](const std::wstring& path) -> std::wstring {
+        if (_wcsicmp(std::filesystem::path(path).filename().c_str(), L"Arknights.exe") != 0 ||
+            !std::filesystem::is_regular_file(std::filesystem::path(path))) return L"请选择 Arknights.exe";
+        config_.game_path = path;
+        game_launch::initialize(root_path_, config_);
+        save_config();
+        return {};
+    };
+    menu_callbacks.on_create_shortcut = [this] { return startup::create_shortcut(root_path_); };
+    menu_callbacks.on_repair_environment = [this]() -> std::wstring {
+        setup_error_ = startup::prepare(root_path_, true);
+        if (setup_error_.empty()) {
+            watch_armed_once_ = false;
+            game_launch::arm_silent_watch();
+        }
+        return setup_error_;
     };
     menu_callbacks.get_status = [this]() -> const Status& { return status_; };
     menu_callbacks.get_feature_mask = [this]() { return status_.feature_mask; };
@@ -780,6 +800,8 @@ int App::initialize(HINSTANCE instance)
         log_warn("tray_create failed, running without tray icon");
     }
 
+    ready_mutex_ = CreateMutexW(nullptr, FALSE, constants::kReadyMutexName);
+    if (!ready_mutex_) return 2;
     SetTimer(shell_hwnd_, constants::kPollTimerId, constants::kPollIntervalMs, nullptr);
     poll();
     refresh_tray_tooltip();
@@ -876,7 +898,7 @@ void App::poll()
 
     // 启动器是独立提权进程，这里只轮询它的退出状态，失败时给出错误横幅。
     game_launch::poll();
-    status_.launch_error = game_launch::last_error();
+    status_.launch_error = setup_error_.empty() ? game_launch::last_error() : setup_error_;
 
     // provider 可能比外壳晚启动，所以战斗区每秒重试一次打开，而不是只在启动时试一次。
     if (!battle_.is_open() && now - last_battle_attempt_ >= 1000)
@@ -896,7 +918,7 @@ void App::poll()
         const char* demo = std::getenv("ARKHELP_PANEL_DEMO");
         const char* no_launch = std::getenv("ARKHELP_NO_GAME_LAUNCH");
         const bool demo_mode = (demo && *demo) || (no_launch && *no_launch && *no_launch != '0');
-        if (!demo_mode && !watch_armed_once_)
+        if (!demo_mode && setup_error_.empty() && !watch_armed_once_)
         {
             watch_armed_once_ = true;
             game_launch::arm_silent_watch();
@@ -910,7 +932,7 @@ void App::poll()
         {
             auto_launch_attempted_ = true;
         }
-        else if (!demo_mode && config_.auto_launch && !auto_launch_attempted_ && !game_seen_ &&
+        else if (!demo_mode && setup_error_.empty() && config_.auto_launch && !auto_launch_attempted_ && !game_seen_ &&
                  !game_launch::busy() && game_launch::paths_ready())
         {
             // The agent rechecks for a concurrent manual start before launching anything.
@@ -927,6 +949,7 @@ void App::poll()
     status_.battle_valid = battle_open && battle_.read(snapshot);
     if (status_.battle_valid)
     {
+        status_.launch_error.clear();
         status_.in_battle = snapshot.in_battle != 0;
         status_.battle_state = snapshot.battle_state;
         status_.time_seconds = snapshot.time_seconds;
@@ -1621,11 +1644,13 @@ void App::request_launch()
         log_warn("launch requested but paths unresolved: %s", wide_to_utf8(game_launch::last_error()).c_str());
         std::wstring message = L"无法定位游戏或 ArkHelper 启动组件。\n\n";
         message += game_launch::last_error();
-        message += L"\n\n请检查 config\\arkhelp.json 里的 game_path，"
-                   L"并保持 ArkHelper 程序文件夹完整。";
+        message += L"\n\n请在设置中选择 Arknights.exe，并保持程序文件夹完整。";
         MessageBoxW(nullptr, message.c_str(), constants::kAppTitle, MB_OK | MB_ICONWARNING);
         return;
     }
+
+    setup_error_ = startup::prepare(root_path_);
+    if (!setup_error_.empty()) { status_.launch_error = setup_error_; menu_refresh(); return; }
 
     const game_launch::Paths& target = game_launch::paths();
     log_info("launch requested: game=%s loader=%s", wide_to_utf8(target.game_exe).c_str(),

@@ -38,8 +38,7 @@ HANDLE named_event(const wchar_t* kind) {
         std::to_wstring(GetCurrentProcessId());
     return CreateEventW(nullptr, TRUE, FALSE, name.c_str());
 }
-DWORD WINAPI run(void*) {
-    auto* current = state.load();
+void run_session(State* current) {
     try {
         if (!current->modules) {
             current->modules = std::make_unique<ark::core::PluginManager>(current->root, current->test_host);
@@ -75,6 +74,29 @@ DWORD WINAPI run(void*) {
         }
     }
     running = false;
+}
+
+DWORD WINAPI run(void*) {
+    auto* current = state.load();
+    HANDLE desktop_stop = OpenEventW(SYNCHRONIZE, FALSE, L"Local\\ArkHelp.RuntimeStop");
+    for (;;) {
+        run_session(current);
+        if (failed || !current->modules || !current->modules->fully_stopped() || !desktop_stop ||
+            WaitForSingleObject(desktop_stop, 0) != WAIT_OBJECT_0) break;
+        // The pinned DLL waits without hooks or publications until a confirmed desktop
+        // session returns. Reopening the UI reuses this thread instead of loading again.
+        for (;;) {
+            Sleep(250);
+            if (WaitForSingleObject(desktop_stop, 0) != WAIT_TIMEOUT) continue;
+            HANDLE desktop = OpenMutexW(SYNCHRONIZE, FALSE, L"Local\\ArkHelp.App");
+            if (!desktop) continue;
+            CloseHandle(desktop);
+            break;
+        }
+        stopping = false;
+        ResetEvent(failed_event);
+    }
+    if (desktop_stop) CloseHandle(desktop_stop);
     return 0;
 }
 }

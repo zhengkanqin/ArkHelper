@@ -131,7 +131,33 @@ int wmain(int argc, wchar_t** argv) {
         if (!until([&] { return !running(); })) { return 11; }
         if (service(ARK_BATTLE_SERVICE_NAME, ARK_BATTLE_ABI_VERSION, sizeof(ArkBattleEventsApiV1), inspect, &valid)) { return 12; }
     }
+    HANDLE existing_desktop = OpenMutexW(SYNCHRONIZE, FALSE, L"Local\\ArkHelp.App");
+    if (existing_desktop) { CloseHandle(existing_desktop); return 14; }
+    HANDLE desktop_stop = CreateEventW(nullptr, TRUE, FALSE, L"Local\\ArkHelp.RuntimeStop");
+    if (!desktop_stop || GetLastError() == ERROR_ALREADY_EXISTS) return 15;
+    HANDLE desktop = CreateMutexW(nullptr, FALSE, L"Local\\ArkHelp.App");
+    if (!desktop || !until([&] { return start(nullptr); }) || !until([&] { return running(); })) return 16;
+    if (!until([] { return snapshot_ready(); })) return 17;
+    SetEvent(desktop_stop);
+    CloseHandle(desktop);
+    if (!until([&] { return !running(); })) return 18;
+    bool valid = false;
+    if (service(ARK_BATTLE_SERVICE_NAME, ARK_BATTLE_ABI_VERSION, sizeof(ArkBattleEventsApiV1), inspect, &valid)) return 19;
+    Sleep(300);
+    if (running()) return 20;
+    ResetEvent(desktop_stop);
+    Sleep(300);
+    if (running()) return 21;
+    desktop = CreateMutexW(nullptr, FALSE, L"Local\\ArkHelp.App");
+    if (!until([&] { return running() && snapshot_ready(); })) return 22;
+    bool published = false;
+    if (!service(ARK_BATTLE_TEST_SERVICE_NAME, ARK_BATTLE_ABI_VERSION, sizeof(ArkBattleTestApiV1), publish, &published) ||
+        !published || !until([] { return snapshot_ready(true); })) return 23;
+    stop();
+    if (!until([&] { return !running(); })) return 24;
+    CloseHandle(desktop);
+    CloseHandle(desktop_stop);
     DestroyWindow(window);
-    std::printf("PASS integrated runtime: IPC v%u, battle services, CSV, three clean stop/start sessions\n", arkhelp::ipc::kVersion);
+    std::printf("PASS integrated runtime: IPC v%u, battle services, CSV, three clean stop/start sessions, dormant desktop reconnect without reloading\n", arkhelp::ipc::kVersion);
     return 0;
 }

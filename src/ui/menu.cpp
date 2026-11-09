@@ -87,6 +87,7 @@ enum class HitTarget
     kPathClick, kPathSpeed, kPathLinger, kCacheLimit,
     kEnemyPause, kEnemyX, kEnemyY, kLineWidth, kOperatorDevices,
     kLineStyleFirst = 430, kCacheOpen = 440, kCacheChange, kCacheDefault,
+    kGamePath = 450, kCreateShortcut, kRepairEnvironment,
     kManageToggleFirst = 500, kManageUpFirst = 520, kManageDownFirst = 540,
 };
 
@@ -97,6 +98,7 @@ struct MenuLayout
     RECT title_bar{};
     RECT close_button{};
     RECT status_card{};
+    RECT launch_button{};
     RECT toggle_rows[kFeatureCount]{};
     RECT toggle_switches[kFeatureCount]{};
     RECT config_buttons[kFeatureCount]{};
@@ -146,6 +148,7 @@ struct MenuState
     OverlayOptions overlay;
     int cache_mb = 500;
     std::wstring cache_path, cache_error;
+    std::wstring game_path, startup_message;
     int font_scale = 0;
     RECT work{};
     menu_layout::Viewport viewport;
@@ -230,7 +233,7 @@ int appearance_height()
 int page_content_height()
 {
     if (g_menu.config_bit == 0) return S(106 + 36*std::popcount(g_menu.menu_features));
-    if (g_menu.config_bit == kSettingsPage) return S(588 + 36*kFeatureCount);
+    if (g_menu.config_bit == kSettingsPage) return S(798 + 36*kFeatureCount);
     if (g_menu.config_bit == ipc::kFeatureHpBars) return S(kAppearanceHeight+264);
     if (g_menu.config_bit == ipc::kFeatureOperatorStats) return S(kAppearanceHeight+264+48+30*ipc::kStatCount+8);
     if (g_menu.config_bit == ipc::kFeatureEnemyStats) return S(kAppearanceHeight+224+48+30*enemy_metrics::kMetrics.size()+8);
@@ -276,6 +279,8 @@ void compute_layout(int width, int height)
 
     int y = layout.viewport.top;
     layout.status_card = RECT{margin + padding, y, margin + width - padding, y + S(80)};
+    layout.launch_button = RECT{layout.status_card.right-S(90),y+S(4),
+                                layout.status_card.right-S(14),y+S(28)};
 
     const int row_height = S(36);
     y = layout.status_card.bottom + S(26);
@@ -449,6 +454,9 @@ std::wstring link_value(const Status& status)
     }
 }
 
+void draw_option_button(HDC dc, const RECT& rect, const wchar_t* text, COLORREF fill, COLORREF fill_hover,
+                        COLORREF text_color, bool hovered);
+
 void draw_status_card(HDC dc, const Status& status)
 {
     const MenuLayout& layout = g_menu.layout;
@@ -464,14 +472,21 @@ void draw_status_card(HDC dc, const Status& status)
     draw_text(dc, L"连接状态", RECT{left, y, left + label_width, y + row_height}, g_menu.small_font,
               theme::kTextMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     const std::wstring link_text = link_value(status);
+    const bool disconnected = status.link == LinkState::kDisconnected;
     draw_text(dc, link_text.c_str(),
-              RECT{left + label_width + S(8), y, right, y + row_height}, g_menu.body_font,
+              RECT{left + label_width + S(8), y, disconnected ? layout.launch_button.left-S(8) : right, y + row_height}, g_menu.body_font,
               link_color(status.link), DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (disconnected) {
+        const bool busy = g_menu.callbacks.get_launch_busy && g_menu.callbacks.get_launch_busy();
+        draw_option_button(dc,layout.launch_button,busy?L"连接中…":status.game_process.empty()?L"启动游戏":L"重试连接",
+            theme::kAccentDeep,theme::kCardHover,theme::kTextPrimary,
+            g_menu.hover==static_cast<int>(HitTarget::kLaunch));
+    }
 
     y += row_height;
     if (!status.launch_error.empty())
     {
-        draw_text(dc,L"启动失败",RECT{left,y,left+label_width,y+row_height},g_menu.small_font,
+        draw_text(dc,L"连接失败",RECT{left,y,left+label_width,y+row_height},g_menu.small_font,
                   theme::kDanger,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
         draw_text(dc,status.launch_error.c_str(),
                   RECT{left+label_width+S(8),y+S(2),right,layout.status_card.bottom-S(4)},
@@ -1095,14 +1110,14 @@ void draw_wiki_fields(HDC dc)
 
 RECT managed_feature_row(int index)
 {
-    const int top = g_menu.layout.viewport.top + S(588 + index * 36);
+    const int top = g_menu.layout.viewport.top + S(798 + index * 36);
     return RECT{g_menu.layout.content.left + g_menu.layout.padding, top,
         g_menu.layout.content.right - g_menu.layout.padding, top + S(34)};
 }
 void draw_feature_management(HDC dc)
 {
     const auto& layout = g_menu.layout;
-    const int top = layout.viewport.top + S(550);
+    const int top = layout.viewport.top + S(760);
     draw_text(dc,L"菜单功能 · 关闭后隐藏并停用",RECT{layout.content.left+layout.padding,top,
         layout.content.right-layout.padding,top+S(30)},g_menu.small_font,theme::kTextSecondary,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
     for(int i=0;i<kFeatureCount;++i) {
@@ -1118,8 +1133,38 @@ void draw_feature_management(HDC dc)
     }
 }
 
+RECT startup_button(int index)
+{
+    const int left=g_menu.layout.content.left+g_menu.layout.padding;
+    const int right=g_menu.layout.content.right-g_menu.layout.padding;
+    const int width=(right-left-S(8))/2;
+    const int row=index/2, column=index%2;
+    return RECT{left+column*(width+S(8)),g_menu.layout.viewport.top+S(612+row*46),
+        left+column*(width+S(8))+width,g_menu.layout.viewport.top+S(646+row*46)};
+}
+
+void draw_startup_settings(HDC dc)
+{
+    const auto& layout=g_menu.layout;
+    const int left=layout.content.left+layout.padding, right=layout.content.right-layout.padding;
+    const int top=layout.viewport.top;
+    draw_text(dc,L"游戏与启动",RECT{left,top+S(550),right,top+S(576)},g_menu.body_font,
+        theme::kTextPrimary,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+    const auto path=g_menu.game_path.empty()?L"未找到游戏，请选择 Arknights.exe":g_menu.game_path.c_str();
+    draw_text(dc,path,RECT{left,top+S(578),right,top+S(604)},g_menu.small_font,
+        theme::kTextSecondary,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_PATH_ELLIPSIS);
+    constexpr const wchar_t* labels[]={L"选择游戏",L"启动 / 重试连接",L"桌面快捷方式",L"修复启动环境"};
+    constexpr HitTarget targets[]={HitTarget::kGamePath,HitTarget::kLaunch,HitTarget::kCreateShortcut,HitTarget::kRepairEnvironment};
+    for(int i=0;i<4;++i) draw_option_button(dc,startup_button(i),labels[i],theme::kCard,theme::kCardHover,
+        theme::kTextPrimary,g_menu.hover==static_cast<int>(targets[i]));
+    if(!g_menu.startup_message.empty()) draw_text(dc,g_menu.startup_message.c_str(),
+        RECT{left,top+S(710),right,top+S(748)},g_menu.small_font,theme::kTextSecondary,
+        DT_LEFT|DT_TOP|DT_WORDBREAK|DT_END_ELLIPSIS);
+}
+
 void draw_settings_page(HDC dc)
 {
+    draw_startup_settings(dc);
     draw_feature_management(dc);
     draw_extra_controls(dc);
     draw_cache_path(dc);
@@ -1322,6 +1367,11 @@ HitTarget hit_test(POINT point)
     }
     if(g_menu.config_bit==kSettingsPage)
     {
+        constexpr HitTarget startup_targets[]={HitTarget::kGamePath,HitTarget::kLaunch,HitTarget::kCreateShortcut,HitTarget::kRepairEnvironment};
+        for(int i=0;i<4;++i) {
+            const auto button=startup_button(i);
+            if(PtInRect(&button,point)) return startup_targets[i];
+        }
         for(int i=0;i<3;++i) {
             const auto button=cache_path_button(i);
             if(PtInRect(&button,point)) return static_cast<HitTarget>(static_cast<int>(HitTarget::kCacheOpen)+i);
@@ -1374,6 +1424,8 @@ HitTarget hit_test(POINT point)
     }
     else
     {
+        if (g_menu.callbacks.get_status && g_menu.callbacks.get_status().link==LinkState::kDisconnected &&
+            PtInRect(&layout.launch_button,point)) return HitTarget::kLaunch;
         for(int i=0;i<kFeatureCount;++i)
         {
             if (!(g_menu.menu_features & kFeatureBits[i])) continue;
@@ -1433,6 +1485,7 @@ void sync_page_config(const Config& config)
     g_menu.menu_opacity=std::clamp(config.menu_opacity,20,100);
     g_menu.ui_scale=config.ui_scale>0?config.ui_scale:100;
     g_menu.auto_launch=config.auto_launch;
+    g_menu.game_path=config.game_path;
     g_menu.wiki_fields=(g_menu.config_bit==ipc::kFeatureEnemyPrts?config.prts_fields:config.wiki_fields)&kWikiAllFields;
     g_menu.menu_features=config.menu_features&kMenuFeatureMask;
     g_menu.feature_order=config.feature_order;
@@ -1610,8 +1663,48 @@ void choose_cache_path()
     dialog->Release();
 }
 
+void choose_game_path()
+{
+    wchar_t path[32768] = {};
+    if(g_menu.game_path.size()<std::size(path)) std::wmemcpy(path,g_menu.game_path.c_str(),g_menu.game_path.size()+1);
+    OPENFILENAMEW dialog{};
+    dialog.lStructSize=sizeof(dialog);
+    dialog.hwndOwner=g_menu.hwnd;
+    dialog.lpstrTitle=L"选择明日方舟 Arknights.exe";
+    dialog.lpstrFilter=L"明日方舟\0Arknights.exe\0\0";
+    dialog.lpstrFile=path;
+    dialog.nMaxFile=static_cast<DWORD>(std::size(path));
+    dialog.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR|OFN_EXPLORER;
+    g_menu.popup_open=true;
+    const bool selected=GetOpenFileNameW(&dialog)!=FALSE;
+    g_menu.popup_open=false;
+    if(selected && g_menu.callbacks.on_game_path) {
+        g_menu.startup_message=g_menu.callbacks.on_game_path(path);
+        if(g_menu.startup_message.empty()) {
+            g_menu.game_path=path;
+            g_menu.startup_message=L"游戏路径已保存";
+        }
+    }
+    render();
+}
+
 void activate_target(HitTarget target)
 {
+    if(target==HitTarget::kGamePath) { choose_game_path(); return; }
+    if(target==HitTarget::kCreateShortcut || target==HitTarget::kRepairEnvironment) {
+        const auto& callback=target==HitTarget::kCreateShortcut?g_menu.callbacks.on_create_shortcut:g_menu.callbacks.on_repair_environment;
+        if(callback) {
+            g_menu.startup_message=callback();
+            if(g_menu.startup_message.empty()) g_menu.startup_message=target==HitTarget::kCreateShortcut?
+                L"桌面快捷方式已创建":L"启动环境已修复，可以重试连接";
+        }
+        render();return;
+    }
+    if(target==HitTarget::kLaunch) {
+        if(g_menu.callbacks.get_launch_busy && g_menu.callbacks.get_launch_busy()) return;
+        if(g_menu.callbacks.on_launch) g_menu.callbacks.on_launch();
+        render();return;
+    }
     if(target>=HitTarget::kLineStyleFirst &&
        static_cast<int>(target)<static_cast<int>(HitTarget::kLineStyleFirst)+3) {
         g_menu.appearance.line_style=static_cast<int>(target)-static_cast<int>(HitTarget::kLineStyleFirst);
