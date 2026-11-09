@@ -455,6 +455,7 @@ void draw_hp_bars(gfx::Surface& surface, const ipc::BattleSnapshot& snapshot, fl
 void draw_operator_stats(gfx::Surface& surface,const ipc::BattleSnapshot& snapshot,float scale,
                          float font_size,const OverlayOptions& options,const PointerState& pointer) {
     if(options.operator_only_paused && !(snapshot.flags&ipc::kBattlePaused)) return;
+    const auto totals = statistics::team_metrics(snapshot, options.operator_show_devices);
     const float size=(font_size>0?font_size:13.0f)*scale;
     const float row_height=size*1.35f;
     const auto order=statistics::parse_order(options.operator_order);
@@ -463,6 +464,7 @@ void draw_operator_stats(gfx::Surface& surface,const ipc::BattleSnapshot& snapsh
         if((options.operator_metric_mask&(1u<<metric)) && selected.size()<6) selected.push_back(metric);
     for(std::uint32_t i=0;i<std::min(snapshot.operator_count,ipc::kMaxUnits);++i) {
         const auto& actor=snapshot.operators[i];
+        if (!statistics::visible(actor, options.operator_show_devices)) continue;
         if((actor.flags&(ipc::kDamageValid|ipc::kDamageScreenValid))!=
             (ipc::kDamageValid|ipc::kDamageScreenValid)) continue;
         if(options.operator_only_hover && !pointer_near(pointer,static_cast<float>(actor.screen.x),
@@ -475,7 +477,7 @@ void draw_operator_stats(gfx::Surface& surface,const ipc::BattleSnapshot& snapsh
         for(int metric:selected) {
             surface.draw_text(statistics::kMetrics[metric].label,left,y,size,kTextColor,gfx::TextAlign::kLeading,true);
             const auto text=(actor.metric_mask&(1u<<metric))?
-                statistics::format(statistics::value(actor,metric),metric):L"—";
+                statistics::format(statistics::value(actor,metric,totals[ipc::kStatDamage]),metric):L"—";
             surface.draw_text(text,left+label_width+size*.7f,y,size,kTitleColor,gfx::TextAlign::kLeading,true);
             y+=row_height;
         }

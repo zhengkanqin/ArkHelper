@@ -79,12 +79,13 @@ enum class HitTarget
     kAppearanceReset = 203,
     kClickThrough = 204,
     kDamageCompact = 205,
+    kDamageDevices = 206,
     kWikiFieldFirst = 300,
     kWikiFieldsDefault = 320,
     kWikiFieldsNone = 321,
     kHpHover = 400, kHpX, kHpY, kOperatorPause, kOperatorHover, kOperatorX, kOperatorY,
     kPathClick, kPathSpeed, kPathLinger, kCacheLimit,
-    kEnemyPause, kEnemyX, kEnemyY, kLineWidth,
+    kEnemyPause, kEnemyX, kEnemyY, kLineWidth, kOperatorDevices,
     kLineStyleFirst = 430, kCacheOpen = 440, kCacheChange, kCacheDefault,
     kManageToggleFirst = 500, kManageUpFirst = 520, kManageDownFirst = 540,
 };
@@ -231,12 +232,12 @@ int page_content_height()
     if (g_menu.config_bit == 0) return S(106 + 36*std::popcount(g_menu.menu_features));
     if (g_menu.config_bit == kSettingsPage) return S(588 + 36*kFeatureCount);
     if (g_menu.config_bit == ipc::kFeatureHpBars) return S(kAppearanceHeight+264);
-    if (g_menu.config_bit == ipc::kFeatureOperatorStats) return S(kAppearanceHeight+224+48+30*ipc::kStatCount+8);
+    if (g_menu.config_bit == ipc::kFeatureOperatorStats) return S(kAppearanceHeight+264+48+30*ipc::kStatCount+8);
     if (g_menu.config_bit == ipc::kFeatureEnemyStats) return S(kAppearanceHeight+224+48+30*enemy_metrics::kMetrics.size()+8);
     if (g_menu.config_bit == ipc::kFeatureEnemyPaths) return S(174+280);
     if (g_menu.config_bit == ipc::kFeatureEnemyRange) return S(130+200);
     if (g_menu.config_bit == ipc::kFeatureDamageNumbers)
-        return S(appearance_height() + 48 + 30 * ipc::kStatCount + 4 * 36 + 8);
+        return S(appearance_height() + 48 + 30 * ipc::kStatCount + 5 * 36 + 8);
     if (g_menu.config_bit == ipc::kFeatureWiki) return S(appearance_height() + 32 + 12 * 32 + 44);
     if (g_menu.config_bit == ipc::kFeatureEnemyPrts) return S(appearance_height() + 32 + 14 * 32 + 44);
     return S(appearance_height() + 96);
@@ -656,7 +657,8 @@ const wchar_t* metric_label(const std::wstring& id) {
 }
 
 RECT damage_row_rect(const MenuLayout& layout, int index) {
-    const int top = feature_content_top() + S((g_menu.config_bit==ipc::kFeatureOperatorStats || g_menu.config_bit==ipc::kFeatureEnemyStats)?272:48) +
+    const int top = feature_content_top() + S(g_menu.config_bit==ipc::kFeatureOperatorStats ? 312 :
+        g_menu.config_bit==ipc::kFeatureEnemyStats ? 272 : 48) +
         (index < static_cast<int>(ipc::kStatCount) ? index * S(30) :
          S(30 * ipc::kStatCount) + (index - static_cast<int>(ipc::kStatCount)) * S(36));
     return RECT{layout.content.left + layout.padding, top, layout.content.right - layout.padding,
@@ -708,7 +710,7 @@ void draw_damage_config_page(HDC dc) {
     const int left = layout.content.left + layout.padding;
     const int right = layout.content.right - layout.padding;
     const bool operators=g_menu.config_bit==ipc::kFeatureOperatorStats || g_menu.config_bit==ipc::kFeatureEnemyStats;
-    const int top=feature_content_top()+S(operators?224:0);
+    const int top=feature_content_top()+S(g_menu.config_bit==ipc::kFeatureOperatorStats ? 264 : operators ? 224 : 0);
     const auto heading=operators?L"最多选择 6 类，箭头调整显示顺序":L"开关选择显示列，箭头调整列顺序";
     draw_text(dc,heading,
               RECT{left,top,right,top+S(22)},
@@ -750,6 +752,10 @@ void draw_damage_config_page(HDC dc) {
     draw_text(dc,L"紧凑布局",RECT{density.left+S(8),density.top,density.right-S(60),density.bottom},
               g_menu.body_font,theme::kTextPrimary,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
     draw_damage_row_toggle(dc,density,config.compact);
+    const auto devices = damage_row_rect(layout,ipc::kStatCount+4);
+    draw_text(dc,L"显示装置",RECT{devices.left+S(8),devices.top,devices.right-S(60),devices.bottom},
+              g_menu.body_font,theme::kTextPrimary,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+    draw_damage_row_toggle(dc,devices,config.show_devices);
 }
 
 HitTarget hit_test_damage_config(POINT point) {
@@ -772,6 +778,8 @@ HitTarget hit_test_damage_config(POINT point) {
     if(PtInRect(&row,point)) return HitTarget::kDamagePreset;
     row=damage_row_rect(layout,ipc::kStatCount+3);
     if(hit_row_switch(row,point)) return HitTarget::kDamageCompact;
+    row=damage_row_rect(layout,ipc::kStatCount+4);
+    if(hit_row_switch(row,point)) return HitTarget::kDamageDevices;
     return HitTarget::kNone;
 }
 
@@ -838,6 +846,7 @@ std::vector<ExtraControl> extra_controls()
     } else if(g_menu.config_bit==ipc::kFeatureOperatorStats) {
         add(HitTarget::kOperatorPause,L"仅暂停时显示",options.operator_only_paused,0,1,1);
         add(HitTarget::kOperatorHover,L"仅鼠标悬停干员时显示",options.operator_only_hover,0,1,1);
+        add(HitTarget::kOperatorDevices,L"显示装置",options.operator_show_devices,0,1,1);
         add(HitTarget::kOperatorX,L"横向偏移",options.operator_offset_x,-200,200,1);
         add(HitTarget::kOperatorY,L"纵向偏移",options.operator_offset_y,-200,200,1);
     } else if(g_menu.config_bit==ipc::kFeatureEnemyStats) {
@@ -950,6 +959,7 @@ bool set_extra_value(HitTarget target,int value)
     case HitTarget::kHpY: options.hp_offset_y=value; break;
     case HitTarget::kOperatorPause: options.operator_only_paused=value!=0; break;
     case HitTarget::kOperatorHover: options.operator_only_hover=value!=0; break;
+    case HitTarget::kOperatorDevices: options.operator_show_devices=value!=0; break;
     case HitTarget::kOperatorX: options.operator_offset_x=value; break;
     case HitTarget::kOperatorY: options.operator_offset_y=value; break;
     case HitTarget::kEnemyPause: options.enemy_only_paused=value!=0; break;
@@ -1028,7 +1038,7 @@ void draw_appearance_page(HDC dc)
                        theme::kTextSecondary,g_menu.hover==static_cast<int>(HitTarget::kAppearanceReset));
     if (floating_panel_page()) {
         const auto row = click_through_row();
-        draw_text(dc,L"窗口点击穿透（菜单中关闭）",RECT{row.left+S(8),row.top,row.right-S(60),row.bottom},
+        draw_text(dc,L"鼠标同时操作悬浮窗和游戏",RECT{row.left+S(8),row.top,row.right-S(60),row.bottom},
             g_menu.body_font,theme::kTextPrimary,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
         draw_damage_row_toggle(dc,row,g_menu.appearance.click_through);
     }
@@ -1659,6 +1669,10 @@ void activate_target(HitTarget target)
         }
         if (target == HitTarget::kDamageCompact) {
             g_menu.damage.compact = !g_menu.damage.compact;
+            apply_damage_config(); render(); return;
+        }
+        if (target == HitTarget::kDamageDevices) {
+            g_menu.damage.show_devices = !g_menu.damage.show_devices;
             apply_damage_config(); render(); return;
         }
         if (target == HitTarget::kAppearanceFont)

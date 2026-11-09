@@ -405,6 +405,7 @@ bool config_load(const std::wstring& path, Config& out)
         out.damage_metric_mask = static_cast<uint32_t>(value) & statistics::kAllMetrics;
     }
     if (find_integer(text, "damage_compact", value)) out.damage_compact = value != 0;
+    if (find_integer(text, "damage_show_devices", value)) out.damage_show_devices = value != 0;
     if (find_integer(text, "damage_merged", value))
     {
         out.damage_merged = value != 0;
@@ -439,6 +440,7 @@ bool config_load(const std::wstring& path, Config& out)
     if (find_integer(text,"hp_only_hover",value)) drawing.hp_only_hover=value!=0;
     if (find_integer(text,"operator_only_paused",value)) drawing.operator_only_paused=value!=0;
     if (find_integer(text,"operator_only_hover",value)) drawing.operator_only_hover=value!=0;
+    if (find_integer(text,"operator_show_devices",value)) drawing.operator_show_devices=value!=0;
     if (find_integer(text,"operator_offset_x",value)) drawing.operator_offset_x=std::clamp(value,-200,200);
     if (find_integer(text,"operator_offset_y",value)) drawing.operator_offset_y=std::clamp(value,-200,200);
     if (find_integer(text,"operator_metric_mask",value)) drawing.operator_metric_mask=static_cast<std::uint32_t>(value)&statistics::kAllMetrics;
@@ -568,6 +570,7 @@ bool config_save(const std::wstring& path, const Config& config)
     }
     const auto& drawing=config.overlay;
     contents += ",\n    \"damage_compact\": " + std::to_string(config.damage_compact ? 1 : 0);
+    contents += ",\n    \"damage_show_devices\": " + std::to_string(config.damage_show_devices ? 1 : 0);
     const auto append_int=[&](const char* name,int number) {
         contents+=",\n    \""+std::string(name)+"\": "+std::to_string(number);
     };
@@ -575,6 +578,7 @@ bool config_save(const std::wstring& path, const Config& config)
     append_int("hp_offset_x",drawing.hp_offset_x); append_int("hp_offset_y",drawing.hp_offset_y);
     append_int("hp_only_hover",drawing.hp_only_hover); append_int("operator_only_paused",drawing.operator_only_paused);
     append_int("operator_only_hover",drawing.operator_only_hover); append_int("operator_offset_x",drawing.operator_offset_x);
+    append_int("operator_show_devices",drawing.operator_show_devices);
     append_int("operator_offset_y",drawing.operator_offset_y); append_int("operator_metric_mask",drawing.operator_metric_mask);
     contents+=",\n    \"operator_order\": \""+escape_json_string(drawing.operator_order)+"\"";
     append_int("path_on_click",drawing.path_on_click); append_int("path_speed",drawing.path_speed);

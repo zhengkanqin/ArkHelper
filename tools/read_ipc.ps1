@@ -1,7 +1,7 @@
 ﻿# Reads the ArkHelper IPC shared-memory sections and prints the current payload.
 #
 # This is a development/diagnostic tool only: the product uses the C++ contract in
-# include/arkhelp/ipc.h. The structs below mirror that header (v8) and must be kept in sync
+# include/arkhelp/ipc.h. The structs below mirror that header (v9) and must be kept in sync
 # when the contract version is bumped; the static asserts in the C# helper catch layout drift.
 #
 # Usage:
@@ -34,8 +34,8 @@ public static class ArkHelperIpcReader
         if (Marshal.SizeOf<SpawnEntry>() != 188 || Marshal.SizeOf<EnemyEntry>() != 248 ||
             Marshal.SizeOf<DamageEntry>() != 296 || Marshal.SizeOf<UnitEntry>() != 176 ||
             Marshal.SizeOf<PathEntry>() != 1184 ||
-            Marshal.SizeOf<BattleSnapshot>() != 146696 || Marshal.SizeOf<CommandState>() != 560)
-        { throw new InvalidOperationException("IPC v8 layout mismatch"); }
+            Marshal.SizeOf<BattleSnapshot>() != 146792 || Marshal.SizeOf<CommandState>() != 560)
+        { throw new InvalidOperationException("IPC v9 layout mismatch"); }
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -142,6 +142,7 @@ public static class ArkHelperIpcReader
         public uint operator_count, operator_reserved;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 64)] public DamageEntry[] operators;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 64)] public ulong[] operator_ids;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 12)] public double[] device_metrics;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -190,7 +191,7 @@ public static class ArkHelperIpcReader
     static bool Read<T>(IntPtr view, uint magic, out T value) where T : struct
     {
         value = default(T);
-        if ((uint)Marshal.ReadInt32(view, 0) != magic || Marshal.ReadInt32(view, 4) != 8 ||
+        if ((uint)Marshal.ReadInt32(view, 0) != magic || Marshal.ReadInt32(view, 4) != 9 ||
             Marshal.ReadInt32(view, 8) != Marshal.SizeOf<T>()) { return false; }
         for (int attempt = 0; attempt < 8; ++attempt)
         {

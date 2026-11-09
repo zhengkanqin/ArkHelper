@@ -23,10 +23,11 @@ struct Actor {
     Box disappeared{&bool_class,0}, dummy{&bool_class,0};
     Box token{&bool_class,0};
     String id{&string_class,L"char_219_meteo"};
+    Actor* host = nullptr;
 };
 struct Method { const char* name; };
 Method methods[]={{"get_characterId"},{"get_alive"},{"get_borned"},
-    {"get_isDisappeared"},{"get_instanceUid"},{"get_isDummy"},{"get_isToken"}};
+    {"get_isDisappeared"},{"get_instanceUid"},{"get_isDummy"},{"get_isToken"},{"FetchHost"}};
 int items_field, count_field;
 bool have_items = true, have_count = true;
 unsigned checks = 0, failures = 0;
@@ -103,7 +104,7 @@ int main() {
         auto& actor=*static_cast<Actor*>(object);
         const auto index=static_cast<Method*>(method)-methods;
         switch(index){case 0:return &actor.id;case 1:return &actor.alive;case 2:return &actor.born;
-            case 3:return &actor.disappeared;case 4:return &actor.uid;case 5:return &actor.dummy;case 6:return &actor.token;}
+            case 3:return &actor.disappeared;case 4:return &actor.uid;case 5:return &actor.dummy;case 6:return &actor.token;case 7:return actor.host;}
         return nullptr;
     };
     runtime.string_length=[](void* value){return static_cast<int>(std::wcslen(static_cast<String*>(value)->value));};
@@ -127,10 +128,17 @@ int main() {
     check(!reader.read(runtime,&actor,id,uid),"disappeared operator cannot retain its head label");
     actor.disappeared.value=0;actor.id.value=L"trap_stage_device";
     check(!reader.read(runtime,&actor,id,uid),"stage device must not have an operator head label");
+    check(reader.read(runtime,&actor,id,uid,true) && id=="trap_stage_device","device capture must be available for the optional display");
+    actor.host=&actor;
+    check(reader.read(runtime,&actor,id,uid,true),"a standalone device may return itself from FetchHost");
+    Actor owner;actor.host=&owner;
+    check(!reader.read(runtime,&actor,id,uid,true),"a derivative with an explicit operator host must not create a separate device label");
+    actor.host=nullptr;
     actor.id.value=L"token_summon";
     check(!reader.read(runtime,&actor,id,uid),"summon must not have a separate operator head label");
     actor.id.value=L"char_219_meteo";actor.token.value=1;
     check(!reader.read(runtime,&actor,id,uid),"a token with a character-shaped ID is still not an independent operator");
+    check(!reader.read(runtime,&actor,id,uid,true),"device option must never create independent summon labels");
     std::printf("Operator capture: %u/%u passed\n",checks-failures,checks);
     return failures ? 1 : 0;
 }

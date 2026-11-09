@@ -574,6 +574,7 @@ int App::initialize(HINSTANCE instance)
         config.metric_mask = config_.damage_metric_mask;
         config.merged = config_.damage_merged;
         config.compact = config_.damage_compact;
+        config.show_devices = config_.damage_show_devices;
         config.sort_metric = config_.damage_sort_metric;
         config.order = config_.damage_order;
         return config;
@@ -584,6 +585,7 @@ int App::initialize(HINSTANCE instance)
         config_.damage_metric_mask = config.metric_mask;
         config_.damage_merged = config.merged;
         config_.damage_compact = config.compact;
+        config_.damage_show_devices = config.show_devices;
         panels::set_statistics_compact(config.compact);
         config_.damage_sort_metric = config.sort_metric;
         config_.damage_order = config.order;
@@ -1062,7 +1064,7 @@ void App::poll()
         std::vector<const ipc::DamageEntry*> actors;
         const auto count = std::min(snapshot.damage_count, ipc::kMaxDamageRows);
         for (std::uint32_t index = 0; index < count; ++index)
-            if (snapshot.damage[index].flags & ipc::kDamageValid) actors.push_back(&snapshot.damage[index]);
+            if (statistics::visible(snapshot.damage[index], config_.damage_show_devices)) actors.push_back(&snapshot.damage[index]);
         const int sort_metric = config_.damage_sort_metric > 0 &&
             config_.damage_sort_metric <= static_cast<int>(ipc::kStatCount)
             ? config_.damage_sort_metric - 1 : ipc::kStatDamage;
@@ -1083,7 +1085,7 @@ void App::poll()
         }
         header.tip = L"总伤害仅合计物理、法术、真实、元素扣血；治疗、回费、元素积累分别统计。";
         damage_rows.push_back(std::move(header));
-        const auto* totals = snapshot.team_metrics;
+        const auto totals = statistics::team_metrics(snapshot, config_.damage_show_devices);
         const auto supported = snapshot.team_metric_mask;
         panels::Row team;
         team.header = true;
@@ -1108,7 +1110,7 @@ void App::poll()
             row.tip = name + L"（" + narrow_to_wide(actor->actor_id) + L"）";
             for (int metric : selected) {
                 const bool available = (actor->metric_mask & (1u << metric)) != 0;
-                const auto value = statistics::value(*actor, metric);
+                const auto value = statistics::value(*actor, metric, totals[ipc::kStatDamage]);
                 row.cells.push_back(available ? statistics::format(value, metric) : L"—");
                 row.tip += L"\n" + std::wstring(statistics::kMetrics[metric].label) + L"：" +
                     (available ? statistics::format(value, metric, true) : L"采集入口未接入");

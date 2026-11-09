@@ -1,6 +1,6 @@
 <# .SYNOPSIS Runs development-only checks against the real menu and ball renderers. #>
 [CmdletBinding()]
-param([string]$OutputDirectory = 'build/ui-review-current')
+param([string]$OutputDirectory = 'build/ui-review-current', [switch]$SharedMouse)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $output = if ([IO.Path]::IsPathRooted($OutputDirectory)) { $OutputDirectory } else { Join-Path $root $OutputDirectory }
@@ -14,11 +14,14 @@ $env:TMP = $env:TEMP
 $reviewData = Join-Path $output 'data'
 New-Item -ItemType Directory -Path $reviewData -Force | Out-Null
 Get-ChildItem -LiteralPath (Join-Path $root 'data') | Copy-Item -Destination $reviewData -Recurse -Force
-foreach ($name in @('ui_ball_review', 'ui_menu_review')) {
+$reviews = @('ui_ball_review', 'ui_menu_review')
+if ($SharedMouse) { $reviews += 'ui_shared_mouse_review' }
+foreach ($name in $reviews) {
     $executable = Join-Path $output ($name + '.exe')
     & $zig c++ -target x86_64-windows-gnu -std=c++20 -O2 -DNOMINMAX -DUNICODE -D_UNICODE -DWIN32_LEAN_AND_MEAN `
         ('-I' + (Join-Path $root 'include')) ('-I' + (Join-Path $root 'src')) `
         (Join-Path $root "tests/$name.cpp") (Join-Path $root 'src/shell/win_util.cpp') `
+        (Join-Path $root 'src/ui/shared_mouse_input.cpp') `
         (Join-Path $root 'src/log/log.cpp') -luser32 -lgdi32 -lshell32 -lole32 -luuid `
         -lwindowscodecs -lmsimg32 -ldwmapi -lshlwapi -lcomdlg32 -municode -o $executable
     if ($LASTEXITCODE -ne 0) { throw "UI review compile failed: $name" }

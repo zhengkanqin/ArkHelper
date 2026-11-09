@@ -925,7 +925,7 @@ void update_operators(il2cpp::Runtime& runtime, const DetourState& state, void* 
             void* character = runtime.at(items, index);
             std::string id;
             std::uint64_t uid = 0;
-            if (!g_operator_reader.read(runtime, character, id, uid)) continue;
+            if (!g_operator_reader.read(runtime, character, id, uid, true)) continue;
             Vector3f viewport;
             bool projected = false;
             try {

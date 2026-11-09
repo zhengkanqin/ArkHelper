@@ -700,7 +700,7 @@ bool NativeCapture::attribute_operator(void* object, ArkEventV1& event) {
         return !value.id.empty();
     }, [&](void* candidate) -> void* {
         return b.fetch_host ? b.fetch_host(candidate, b.fetch_host_info) : nullptr;
-    });
+    }, true);
     if (!found) return false;
     copy_id(event.actor_id, sizeof(event.actor_id), identity.id);
     event.actor_instance = identity.instance;

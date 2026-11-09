@@ -53,6 +53,22 @@ inline double value(const ipc::DamageEntry& row, int metric) {
     return std::isfinite(number) && number > 0 ? number : 0.0;
 }
 
+inline bool visible(const ipc::DamageEntry& row, bool show_devices) {
+    return (row.flags & ipc::kDamageValid) && (show_devices || !(row.flags & ipc::kDamageDevice));
+}
+
+inline std::array<double, ipc::kStatCount> team_metrics(const ipc::BattleSnapshot& snapshot, bool show_devices) {
+    std::array<double, ipc::kStatCount> totals{};
+    for (std::uint32_t i = 0; i < ipc::kStatCount; ++i)
+        totals[i] = std::max(0.0, snapshot.team_metrics[i] - (show_devices ? 0.0 : snapshot.device_metrics[i]));
+    totals[ipc::kStatShare] = totals[ipc::kStatDamage] > 0 ? 1.0 : 0.0;
+    return totals;
+}
+
+inline double value(const ipc::DamageEntry& row, int metric, double team_damage) {
+    return metric == ipc::kStatShare ? (team_damage > 0 ? value(row, ipc::kStatDamage) / team_damage : 0.0) : value(row, metric);
+}
+
 inline std::wstring format(double value, int metric, bool exact = false) {
     wchar_t buffer[80]{};
     if (metric == ipc::kStatShare) {

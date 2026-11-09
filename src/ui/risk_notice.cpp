@@ -138,7 +138,13 @@ LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM wparam, LPARAM lpar
         }
         break;
     case WM_CLOSE: DestroyWindow(window); return 0;
-    case WM_DESTROY: KillTimer(window, 1); notice->done = true; return 0;
+    case WM_DESTROY:
+        KillTimer(window, 1);
+        notice->done = true;
+        // A sent accessibility command can destroy the window inside GetMessage.
+        // Wake that call so the notice loop can observe completion.
+        PostThreadMessageW(GetCurrentThreadId(), WM_NULL, 0, 0);
+        return 0;
     case WM_NCHITTEST: {
         POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
         ScreenToClient(window, &point);

@@ -1,4 +1,4 @@
-// Runtime-worker publisher for IPC v8 and StageOverview v1.
+// Runtime-worker publisher for IPC v9 and StageOverview v1.
 // Copies current-stage/capture data and battle-event totals into bounded shared-memory
 // snapshots. Unity objects are sampled by the main-thread capture hook.
 #pragma once

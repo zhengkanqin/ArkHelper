@@ -1,4 +1,5 @@
 #include "../src/features/features.h"
+#include "../src/data/battle_statistics.h"
 #include <cstdio>
 #include <stdexcept>
 #include <vector>
@@ -74,6 +75,28 @@ int main() {
         features::draw_operator_stats(surface,snapshot,1,16,options,pointer);
         check(texts.size()==4 && texts[1].value==L"100" && texts[3].value==L"60" && texts[0].x!=texts[2].x,
             "two instances must draw independent values at distinct anchors");
+        texts.clear();
+        snapshot.operators[1].flags |= ipc::kDamageDevice;
+        snapshot.team_metrics[ipc::kStatDamage] = 160;
+        snapshot.device_metrics[ipc::kStatDamage] = 60;
+        snapshot.team_metrics[ipc::kStatCost] = 14;
+        snapshot.device_metrics[ipc::kStatCost] = 4;
+        const auto operators_only = statistics::team_metrics(snapshot, false);
+        const auto with_devices = statistics::team_metrics(snapshot, true);
+        check(operators_only[ipc::kStatDamage] == 100 && operators_only[ipc::kStatCost] == 10 &&
+            operators_only[ipc::kStatShare] == 1 && with_devices[ipc::kStatDamage] == 160,
+            "hidden devices must be removed from full totals, including rows beyond the IPC limit");
+        options.operator_metric_mask = 1u << ipc::kStatShare;
+        snapshot.operators[0].metric_mask |= 1u << ipc::kStatShare;
+        snapshot.operators[1].metric_mask |= 1u << ipc::kStatShare;
+        features::draw_operator_stats(surface,snapshot,1,16,options,pointer);
+        check(texts.size()==2 && texts[1].value==L"100.0%", "default operator display included a device or its damage share denominator");
+        texts.clear(); options.operator_show_devices = true;
+        features::draw_operator_stats(surface,snapshot,1,16,options,pointer);
+        check(texts.size()==4 && texts[1].value==L"62.5%" && texts[3].value==L"37.5%",
+            "optional device display did not show separate instance metrics with consistent shares");
+        check(!statistics::visible(snapshot.operators[1],false) && statistics::visible(snapshot.operators[1],true),
+            "statistics device visibility filter failed");
         texts.clear();
         snapshot.battle_state=2;
         snapshot.units[0].tracking_id=11;

@@ -1,4 +1,4 @@
-// ArkHelper IPC contract v8 (mapping names retain their original .v1 suffix).
+// ArkHelper IPC contract v9 (mapping names retain their original .v1 suffix).
 //
 // Two named shared-memory sections connect the in-game provider plugin (writer of the battle
 // snapshot, reader of commands) with the external ArkHelper.exe overlay (writer of commands, reader
@@ -22,7 +22,7 @@
 
 namespace arkhelp::ipc {
 
-inline constexpr std::uint32_t kVersion = 8;
+inline constexpr std::uint32_t kVersion = 9;
 inline constexpr std::uint32_t kBattleMagic = 0x42484841u;   // "AHHB"
 inline constexpr std::uint32_t kCommandMagic = 0x43484841u;  // "AHHC"
 
@@ -89,6 +89,7 @@ enum EnemyStat : std::uint32_t {
 enum DamageFlags : std::uint32_t {
     kDamageValid = 1u << 0,
     kDamageScreenValid = 1u << 1,
+    kDamageDevice = 1u << 2,       // independent stage device; summons remain attributed to their owner
 };
 
 enum DamageType : std::uint32_t {
@@ -247,6 +248,7 @@ struct BattleSnapshot {
     std::uint32_t operator_reserved = 0;
     DamageEntry operators[kMaxUnits]{}; // Per-instance contributions and anchors; never added to team totals.
     std::uint64_t operator_ids[kMaxUnits]{};
+    double device_metrics[kStatCount] = {}; // captured devices, including rows beyond the display limit
 };
 
 enum CommandFlags : std::uint32_t {

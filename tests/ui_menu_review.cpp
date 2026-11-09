@@ -40,12 +40,15 @@ int wmain(int argc, wchar_t** argv) {
             DamageConfig result;
             result.metric_mask = config.damage_metric_mask;
             result.order = config.damage_order;
+            result.compact = config.damage_compact;
+            result.show_devices = config.damage_show_devices;
             return result;
         };
         callbacks.on_damage_config = [&](const DamageConfig& value) {
             config.damage_metric_mask=value.metric_mask; config.damage_order=value.order;
             config.damage_merged=value.merged; config.damage_sort_metric=value.sort_metric;
             config.damage_compact=value.compact;
+            config.damage_show_devices=value.show_devices;
         };
         callbacks.on_appearance = [&](std::uint32_t bit,const FeatureAppearance& value) {
             feature_appearance(config,bit)=value;
@@ -198,6 +201,9 @@ int wmain(int argc, wchar_t** argv) {
         save(L"menu-operator-top.bmp");
         click_rect(extra_rect(HitTarget::kOperatorPause),HitTarget::kOperatorPause);
         click_rect(extra_rect(HitTarget::kOperatorHover),HitTarget::kOperatorHover);
+        if(config.overlay.operator_show_devices || config.damage_show_devices) throw std::runtime_error("devices must be hidden by default");
+        click_rect(extra_rect(HitTarget::kOperatorDevices),HitTarget::kOperatorDevices);
+        if(!config.overlay.operator_show_devices || config.damage_show_devices) throw std::runtime_error("operator device switch must be independent of statistics");
         if(!config.overlay.operator_only_paused || !config.overlay.operator_only_hover)
             throw std::runtime_error("operator pause/hover settings failed");
         config.overlay.operator_metric_mask=0x3f;
@@ -322,6 +328,10 @@ int wmain(int argc, wchar_t** argv) {
         if(config.damage_compact) throw std::runtime_error("menu cannot disable compact table spacing");
         click_rect(row_switch(damage_row_rect(g_menu.layout,ipc::kStatCount+3)),HitTarget::kDamageCompact);
         if(!config.damage_compact) throw std::runtime_error("menu cannot restore compact table spacing");
+        click_rect(row_switch(damage_row_rect(g_menu.layout,ipc::kStatCount+4)),HitTarget::kDamageDevices);
+        if(!config.damage_show_devices || !config.overlay.operator_show_devices) throw std::runtime_error("statistics device switch did not enable independently");
+        click_rect(row_switch(damage_row_rect(g_menu.layout,ipc::kStatCount+4)),HitTarget::kDamageDevices);
+        if(config.damage_show_devices || !config.overlay.operator_show_devices) throw std::runtime_error("statistics device switch changed operator display");
         if (g_menu.viewport.maximum_scroll() <= 0) throw std::runtime_error("long statistics configuration cannot scroll");
         const auto fixed_footer = g_menu.layout.back_button;
         const auto order=statistics::parse_order(config.damage_order);
@@ -399,6 +409,30 @@ int wmain(int argc, wchar_t** argv) {
         panels::set_appearance(panels::kDamagePanelId,{});
         if(GetWindowLongPtrW(panel->hwnd,GWL_EXSTYLE)&WS_EX_TRANSPARENT)
             throw std::runtime_error("click-through cannot be switched back off");
+        // Replay queued screen coordinates without moving the user's cursor or capturing native input.
+        const int previous_x=panel->x,previous_y=panel->y;
+        panel->x=-30000;panel->y=-30000;
+        SetWindowPos(panel->hwnd,nullptr,panel->x,panel->y,0,0,SWP_NOSIZE|SWP_NOACTIVATE|SWP_NOZORDER);
+        POINT shared_title{panel->title_bar.left+40,(panel->title_bar.top+panel->title_bar.bottom)/2};
+        ClientToScreen(panel->hwnd,&shared_title);
+        panels::send_shared_mouse(*panel,{WM_LBUTTONDOWN,shared_title,MK_LBUTTON});
+        if(!panel->dragging || GetCapture()==panel->hwnd) throw std::runtime_error("shared title drag did not begin without stealing capture");
+        POINT shared_moved{shared_title.x+72,shared_title.y+48};
+        panels::send_shared_mouse(*panel,{WM_MOUSEMOVE,shared_moved,MK_LBUTTON});
+        if(panel->x!=-30000+72 || panel->y!=-30000+48) throw std::runtime_error("shared drag did not use queued event coordinates");
+        panels::send_shared_mouse(*panel,{WM_LBUTTONUP,shared_moved,0});
+        if(panel->dragging || GetCapture()==panel->hwnd) throw std::runtime_error("shared drag remained active after release");
+        POINT shared_edge{panel->width_grip.right-1,(panel->title_bar.top+panel->title_bar.bottom)/2};
+        ClientToScreen(panel->hwnd,&shared_edge);
+        const int shared_width=panel->width_override_px;
+        panels::send_shared_mouse(*panel,{WM_LBUTTONDOWN,shared_edge,MK_LBUTTON});
+        shared_edge.x-=45;
+        panels::send_shared_mouse(*panel,{WM_MOUSEMOVE,shared_edge,MK_LBUTTON});
+        panels::send_shared_mouse(*panel,{WM_LBUTTONUP,shared_edge,0});
+        if(panel->width_override_px!=std::clamp(shared_width-45,panels::S(*panel,260),900) || panel->resizing_width || GetCapture()==panel->hwnd)
+            throw std::runtime_error("shared resize lost its copied input or captured native mouse");
+        panel->x=previous_x;panel->y=previous_y;
+        SetWindowPos(panel->hwnd,nullptr,panel->x,panel->y,0,0,SWP_NOSIZE|SWP_NOACTIVATE|SWP_NOZORDER);
         panel->width_override_px=panels::S(*panel,260);
         panel->ui_scale=100;
         panels::destroy_fonts(*panel);

@@ -592,6 +592,7 @@ void fill_paths(ipc::BattleSnapshot& snapshot, const capture::Status& status, co
 void fill_damage(ipc::BattleSnapshot& snapshot, const capture::Status& status, const GameClient& client) {
     std::vector<const ark::damage_meter::ActorRow*> rows;
     g_statistics.sort_rows(rows, true);
+    std::stable_partition(rows.begin(), rows.end(), [](const auto* row) { return !is_device_id(row->id); });
     const auto limit = std::min<std::size_t>(rows.size(), ipc::kMaxDamageRows);
     const double duration = std::max(0.1, g_statistics.duration());
     const double team_damage = g_statistics.total(true);
@@ -606,7 +607,7 @@ void fill_damage(ipc::BattleSnapshot& snapshot, const capture::Status& status, c
         const auto& row = *rows[index];
         ipc::DamageEntry overflow;
         auto& entry = index < limit ? snapshot.damage[index] : overflow;
-        entry.flags = ipc::kDamageValid;
+        entry.flags = ipc::kDamageValid | (is_device_id(row.id) ? ipc::kDamageDevice : 0u);
         entry.total_damage = static_cast<std::int64_t>(std::llround(row.actual));
         entry.dps = static_cast<float>(row.actual / duration);
         entry.share = team_damage > 0 ? static_cast<float>(row.actual / team_damage) : 0.f;
@@ -622,8 +623,10 @@ void fill_damage(ipc::BattleSnapshot& snapshot, const capture::Status& status, c
         entry.metrics[ipc::kStatTaken] = row.taken;
         entry.metrics[ipc::kStatDps] = row.actual / duration;
         entry.metrics[ipc::kStatShare] = team_damage > 0 ? row.actual / team_damage : 0;
-        for (std::uint32_t metric = 0; metric < ipc::kStatCount; ++metric)
+        for (std::uint32_t metric = 0; metric < ipc::kStatCount; ++metric) {
             snapshot.team_metrics[metric] += entry.metrics[metric];
+            if (entry.flags & ipc::kDamageDevice) snapshot.device_metrics[metric] += entry.metrics[metric];
+        }
         copy_text(entry.actor_id, sizeof(entry.actor_id), row.id);
     }
     snapshot.damage_count = static_cast<std::uint32_t>(limit);

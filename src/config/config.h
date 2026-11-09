@@ -20,7 +20,7 @@ struct FeatureAppearance
     std::int32_t text_color = -1; // 0xRRGGBB; -1 keeps semantic/default colours
     int line_width = 2;     // logical pixels, 1..8; line features only
     int line_style = 0;     // 0 solid, 1 dashed, 2 dotted
-    bool click_through = false; // floating data panels; configured from the main menu
+    bool click_through = false; // panel and underlying application share native mouse gestures
     bool operator==(const FeatureAppearance&) const = default;
 };
 
@@ -47,6 +47,7 @@ struct OverlayOptions
     int hp_offset_x = 0, hp_offset_y = 0; // logical pixels, -200..200
     bool hp_only_hover = false;
     bool operator_only_paused = false, operator_only_hover = false;
+    bool operator_show_devices = false;
     int operator_offset_x = 28, operator_offset_y = -40;
     std::uint32_t operator_metric_mask = (1u << ipc::kStatDamage) | (1u << ipc::kStatHeal) |
         (1u << ipc::kStatCost);
@@ -109,6 +110,7 @@ struct Config
     uint32_t damage_metric_mask = (1u << 0) | (1u << 4) | (1u << 6) | (1u << 10) | (1u << 11);
     bool damage_merged = false;
     bool damage_compact = true;
+    bool damage_show_devices = false;
     int damage_sort_metric = 0;
     std::wstring damage_order = L"total,physical,arts,true,heal,element,cost,buildup,taken,shield,dps,share";
     bool auto_launch = true;  // 启动助手时启动一次游戏；已运行时仅连接

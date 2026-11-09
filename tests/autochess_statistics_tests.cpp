@@ -117,14 +117,20 @@ int main() {
         Actor token{L"token_fixture",9001,true,&first,true};
         Actor derivative{L"trap_fixture",9002,true,&second,true};
         Actor device{L"trap_stage_device",9003,true};
+        ark::OperatorIdentity device_identity;
+        check(ark::resolve_operator(&device,device_identity,[](void*,auto& identity) {
+            identity={"trap_stage_device",9003,false};return true;
+        },[](void* object){return object;},true) && device_identity.instance==9003,
+            "a non-token device with a self host must remain available to the optional display");
         damage={25LL<<32,&token,&enemy}; capture.record_damage(&history,&damage,false);
         damage.source=&derivative;damage.real=40LL<<32;capture.record_damage(&history,&damage,false);
         damage.source=&device;damage.real=1000LL<<32;capture.record_damage(&history,&damage,false);
         replay(history,stats);
-        check(stats.rows.size()==1 && stats.total(true)==65,"summon totals belong to operators and stage devices are excluded");
+        check(stats.rows.size()==2 && stats.total(true)==1065 && stats.rows.at("char_219_meteo").actual==65,
+              "summons belong to operators while optional stage devices retain separate captured totals");
         check(stats.instances.at(first.uid).actual==25 && stats.instances.at(second.uid).actual==40,
               "two identical summoners must keep their own summons' contributions");
-        check(!stats.instances.count(token.uid) && !stats.instances.count(device.uid),"summons and devices must not create separate rows");
+        check(!stats.instances.count(token.uid) && stats.instances.at(device.uid).actual==1000,"summons must not create separate rows, stage devices must remain available");
         damage.source=&token;damage.type=ARK_DAMAGE_HEAL;damage.real=10LL<<32;capture.record_damage(&history,&damage,false);
         damage.source=&enemy;damage.target=&token;damage.type=ARK_DAMAGE_PHYSICAL;damage.real=5LL<<32;capture.record_damage(&history,&damage,false);
         capture.record_cost(&controller,&token,6);
@@ -133,7 +139,7 @@ int main() {
               stats.instances.at(first.uid).deployment_points==6,"summon support metrics must follow the same exact owner");
         token.host=&token;damage.source=&token;damage.target=&enemy;damage.real=1000LL<<32;
         capture.record_damage(&history,&damage,false);replay(history,stats);
-        check(stats.total(true)==65,"cyclic or unresolved host links must not guess an operator");
+        check(stats.total(true)==1065,"cyclic or unresolved host links must not guess an operator");
         std::printf("AutoChess production capture: %u checks passed; IPC=%zu\n",checks,sizeof(snapshot));
     } catch(const std::exception& error) { std::fprintf(stderr,"FAIL %s\n",error.what());return 1; }
 }

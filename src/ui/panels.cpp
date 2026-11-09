@@ -8,6 +8,7 @@
 #include "../log/log.h"
 #include "../shell/theme.h"
 #include "../shell/win_util.h"
+#include "shared_mouse_input.h"
 
 namespace arkhelp::panels
 {
@@ -40,6 +41,8 @@ struct PanelState
     bool dragging = false;
     bool resizing = false;
     bool resizing_width = false;
+    bool shared_dispatch = false;
+    POINT shared_cursor{};
     POINT resize_cursor_start{0, 0};
     POINT width_resize_cursor_start{0, 0};
     int resize_start_height = 0;
@@ -103,6 +106,54 @@ struct PanelState
 PanelState* g_panels[4] = {nullptr, nullptr, nullptr, nullptr};
 Callbacks g_callbacks;
 HINSTANCE g_instance = nullptr;
+std::vector<std::pair<PanelState*, POINT>> g_drag_starts;
+constexpr UINT kSharedMouseMessage = WM_APP + 0x71;
+constexpr UINT_PTR kSharedMouseTimer = 1;
+SharedMouseInput g_shared_mouse;
+HWND g_shared_window = nullptr;
+PanelState* g_shared_gesture = nullptr;
+PanelState* g_shared_hover = nullptr;
+HWND g_shared_source = nullptr;
+POINT g_shared_hover_point{};
+ULONGLONG g_shared_hover_since = 0;
+void refresh_shared_input();
+
+void cancel_interaction(PanelState& panel)
+{
+    if (panel.dragging) g_drag_starts.clear();
+    panel.dragging = panel.resizing = panel.resizing_width = false;
+    panel.settings_pressed = panel.scrolling_horizontal = false;
+    if (GetCapture() == panel.hwnd) ReleaseCapture();
+}
+
+void cancel_shared_input(PanelState* panel = nullptr)
+{
+    if (g_shared_gesture && (!panel || g_shared_gesture == panel)) {
+        cancel_interaction(*g_shared_gesture);
+        g_shared_gesture = nullptr;
+        g_shared_source = nullptr;
+    }
+    if (g_shared_hover && (!panel || g_shared_hover == panel)) {
+        g_shared_hover->hints.hide();
+        g_shared_hover = nullptr;
+    }
+}
+
+void mouse_cursor(const PanelState& panel, POINT& point)
+{
+    if (panel.shared_dispatch) point = panel.shared_cursor;
+    else GetCursorPos(&point);
+}
+
+void capture_mouse(const PanelState& panel)
+{
+    if (!panel.shared_dispatch) SetCapture(panel.hwnd);
+}
+
+void release_mouse(const PanelState& panel)
+{
+    if (GetCapture() == panel.hwnd) ReleaseCapture();
+}
 
 // 磁吸分组：同组面板上下紧贴、一起拖动、宽度统一到组内最大值。
 struct DockGroup
@@ -111,7 +162,6 @@ struct DockGroup
 };
 
 std::vector<DockGroup> g_dock_groups;
-std::vector<std::pair<PanelState*, POINT>> g_drag_starts;
 
 DockGroup* find_group(const PanelState* panel)
 {
@@ -826,16 +876,20 @@ void position_and_present(PanelState& panel)
     {
         ShowWindow(panel.hwnd, SW_SHOWNOACTIVATE);
         panel.visible = true;
+        refresh_shared_input();
     }
 }
 
 void hide(PanelState& panel)
 {
+    cancel_shared_input(&panel);
+    cancel_interaction(panel);
     panel.hints.hide();
     if (panel.visible)
     {
         ShowWindow(panel.hwnd, SW_HIDE);
         panel.visible = false;
+        refresh_shared_input();
     }
 }
 
@@ -1049,9 +1103,9 @@ void undock_panel(PanelState& panel)
 void begin_drag(PanelState& panel)
 {
     panel.dragging = true;
-    GetCursorPos(&panel.drag_cursor_start);
+    mouse_cursor(panel, panel.drag_cursor_start);
     GetWindowRect(panel.hwnd, &panel.drag_window_start);
-    SetCapture(panel.hwnd);
+    capture_mouse(panel);
     g_drag_starts.clear();
     DockGroup* group = find_group(&panel);
     if (group != nullptr)
@@ -1138,7 +1192,7 @@ LRESULT CALLBACK panel_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
         panel->hints.hide();
         POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
         if(PtInRect(&panel->settings_button,point)) {
-            panel->settings_pressed=true;panel->settings_press_point=point;SetCapture(hwnd);return 0;
+            panel->settings_pressed=true;panel->settings_press_point=point;capture_mouse(*panel);return 0;
         }
         if (panel->closeable && PtInRect(&panel->close_button, point)) {
             hide(*panel);
@@ -1154,18 +1208,18 @@ LRESULT CALLBACK panel_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
                 render(*panel); position_and_present(*panel);
             }
             panel->scrolling_horizontal = true;
-            GetCursorPos(&panel->resize_cursor_start);
+            mouse_cursor(*panel, panel->resize_cursor_start);
             panel->horizontal_start_cursor = panel->resize_cursor_start.x;
             panel->horizontal_start_px = panel->horizontal_px;
-            SetCapture(hwnd);
+            capture_mouse(*panel);
             return 0;
         }
         if (PtInRect(&panel->width_grip, point))
         {
             panel->resizing_width = true;
-            GetCursorPos(&panel->width_resize_cursor_start);
+            mouse_cursor(*panel, panel->width_resize_cursor_start);
             panel->resize_start_width = panel->content.right - panel->content.left;
-            SetCapture(panel->hwnd);
+            capture_mouse(*panel);
             return 0;
         }
         if (panel->collapsed && PtInRect(&panel->resize_grip, point))
@@ -1177,9 +1231,9 @@ LRESULT CALLBACK panel_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
         if (PtInRect(&panel->resize_grip, point))
         {
             panel->resizing = true;
-            GetCursorPos(&panel->resize_cursor_start);
+            mouse_cursor(*panel, panel->resize_cursor_start);
             panel->resize_start_height = panel->content.bottom - panel->content.top;
-            SetCapture(panel->hwnd);
+            capture_mouse(*panel);
             return 0;
         }
         if (has_dock_partner(*panel) && PtInRect(&panel->split_button, point))
@@ -1223,7 +1277,7 @@ LRESULT CALLBACK panel_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
         if(panel->settings_pressed && (std::abs(current.x-panel->settings_press_point.x)>S(*panel,4) ||
             std::abs(current.y-panel->settings_press_point.y)>S(*panel,4))) panel->settings_pressed=false;
         if (panel->scrolling_horizontal) {
-            POINT cursor{}; GetCursorPos(&cursor);
+            POINT cursor{}; mouse_cursor(*panel, cursor);
             const int travel = (panel->horizontal_track.right - panel->horizontal_track.left) -
                 (panel->horizontal_thumb.right - panel->horizontal_thumb.left);
             panel->horizontal_px = std::clamp<int>(panel->horizontal_start_px +
@@ -1235,7 +1289,7 @@ LRESULT CALLBACK panel_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
         if (panel->resizing_width)
         {
             POINT cursor{};
-            GetCursorPos(&cursor);
+            mouse_cursor(*panel, cursor);
             int width = panel->resize_start_width + (cursor.x - panel->width_resize_cursor_start.x);
             const int minimum = S(*panel, std::wcscmp(panel->id, kDamagePanelId) == 0 ? 260 : 180);
             if (width < minimum)
@@ -1269,7 +1323,7 @@ LRESULT CALLBACK panel_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
         if (panel->resizing)
         {
             POINT cursor{};
-            GetCursorPos(&cursor);
+            mouse_cursor(*panel, cursor);
             int height = panel->resize_start_height + (cursor.y - panel->resize_cursor_start.y);
             const bool statistics = std::wcscmp(panel->id, kDamagePanelId) == 0;
             const int minimum = title_height(*panel) + S(*panel, 6) +
@@ -1292,7 +1346,7 @@ LRESULT CALLBACK panel_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
         if (panel->dragging)
         {
             POINT cursor{};
-            GetCursorPos(&cursor);
+            mouse_cursor(*panel, cursor);
             const int dx = cursor.x - panel->drag_cursor_start.x;
             const int dy = cursor.y - panel->drag_cursor_start.y;
             if (g_drag_starts.size() >= 2)
@@ -1328,7 +1382,7 @@ LRESULT CALLBACK panel_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
             }
 
         }
-        panel->hints.mouse_move(current);
+        if (!panel->shared_dispatch) panel->hints.mouse_move(current);
         return 0;
     }
     case WM_MOUSEHOVER:
@@ -1375,17 +1429,17 @@ LRESULT CALLBACK panel_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
     case WM_LBUTTONUP:
         if(panel->settings_pressed) {
             const POINT point{GET_X_LPARAM(lparam),GET_Y_LPARAM(lparam)};
-            panel->settings_pressed=false;ReleaseCapture();
+            panel->settings_pressed=false;release_mouse(*panel);
             if(PtInRect(&panel->settings_button,point) && g_callbacks.on_settings) g_callbacks.on_settings(panel->id);
             return 0;
         }
         if (panel->scrolling_horizontal) {
-            panel->scrolling_horizontal = false; ReleaseCapture(); return 0;
+            panel->scrolling_horizontal = false; release_mouse(*panel); return 0;
         }
         if (panel->resizing_width)
         {
             panel->resizing_width = false;
-            ReleaseCapture();
+            release_mouse(*panel);
             if (g_callbacks.on_resized)
             {
                 if(auto* group=find_group(panel)) {
@@ -1397,7 +1451,7 @@ LRESULT CALLBACK panel_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
         if (panel->resizing)
         {
             panel->resizing = false;
-            ReleaseCapture();
+            release_mouse(*panel);
             if (g_callbacks.on_resized)
             {
                 g_callbacks.on_resized(panel->id, panel->width_override_px, panel->height_override_px);
@@ -1407,7 +1461,7 @@ LRESULT CALLBACK panel_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
         if (panel->dragging)
         {
             panel->dragging = false;
-            ReleaseCapture();
+            release_mouse(*panel);
             g_drag_starts.clear();
             if (!try_dock(*panel))
             {
@@ -1416,8 +1470,8 @@ LRESULT CALLBACK panel_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
         }
         return 0;
     case WM_CAPTURECHANGED:
-        panel->settings_pressed=false;
-        panel->scrolling_horizontal = false;
+    case WM_CANCELMODE:
+        cancel_interaction(*panel);
         return 0;
     case WM_DESTROY:
         panel->hints.destroy();
@@ -1473,6 +1527,129 @@ PanelState* find(const wchar_t* id)
         }
     }
     return nullptr;
+}
+
+PanelState* shared_mouse_hit(POINT screen)
+{
+    if (GetCapture()) return nullptr;
+    const HWND native = GetAncestor(WindowFromPoint(screen), GA_ROOT);
+    if (!native) return nullptr;
+    DWORD process = 0;
+    GetWindowThreadProcessId(native, &process);
+    // Menus, the floating button and ordinary panels keep exclusive interaction.
+    if (process == GetCurrentProcessId()) return nullptr;
+    for (HWND window = GetTopWindow(nullptr); window && window != native; window = GetWindow(window, GW_HWNDNEXT)) {
+        for (auto* panel : g_panels) {
+            if (!panel || window != panel->hwnd || !panel->visible || !panel->appearance.click_through) continue;
+            POINT point = screen;
+            ScreenToClient(window, &point);
+            if (PtInRect(&panel->content, point)) return panel;
+        }
+    }
+    return nullptr;
+}
+
+void send_shared_mouse(PanelState& panel, const SharedMouseEvent& event)
+{
+    POINT point = event.screen;
+    ScreenToClient(panel.hwnd, &point);
+    panel.shared_dispatch = true;
+    panel.shared_cursor = event.screen;
+    const bool wheel = event.message == WM_MOUSEWHEEL || event.message == WM_MOUSEHWHEEL;
+    const POINT coordinates = wheel ? event.screen : point;
+    SendMessageW(panel.hwnd, event.message, event.keys, MAKELPARAM(coordinates.x, coordinates.y));
+    panel.shared_dispatch = false;
+}
+
+void dispatch_shared_mouse(const SharedMouseEvent& event)
+{
+    if (event.message == WM_CANCELMODE) { cancel_shared_input(); return; }
+    if (g_shared_gesture && (!g_shared_gesture->visible || !g_shared_gesture->appearance.click_through ||
+        GetCapture() || GetAncestor(GetForegroundWindow(), GA_ROOT) != g_shared_source)) cancel_shared_input();
+
+    PanelState* target = g_shared_gesture;
+    if (event.message == WM_LBUTTONDOWN) {
+        cancel_shared_input();
+        target = shared_mouse_hit(event.screen);
+        if (target) {
+            g_shared_gesture = target;
+            g_shared_source = GetAncestor(WindowFromPoint(event.screen), GA_ROOT);
+        }
+    } else if (!target && event.message != WM_LBUTTONUP) {
+        target = (event.keys & MK_LBUTTON) ? nullptr : shared_mouse_hit(event.screen);
+    }
+    if (g_shared_hover != target) {
+        if (g_shared_hover) g_shared_hover->hints.hide();
+        g_shared_hover = target;
+        g_shared_hover_since = GetTickCount64();
+    }
+    if (!target) return;
+    if (std::abs(event.screen.x - g_shared_hover_point.x) > 3 || std::abs(event.screen.y - g_shared_hover_point.y) > 3) {
+        target->hints.hide();
+        g_shared_hover_point = event.screen;
+        g_shared_hover_since = GetTickCount64();
+    }
+    send_shared_mouse(*target, event);
+    if (event.message == WM_LBUTTONUP) {
+        g_shared_gesture = nullptr;
+        g_shared_source = nullptr;
+    }
+}
+
+LRESULT CALLBACK shared_mouse_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
+{
+    if (message == kSharedMouseMessage) {
+        for (const auto& event : g_shared_mouse.take()) dispatch_shared_mouse(event);
+        return 0;
+    }
+    if (message == WM_TIMER && wparam == kSharedMouseTimer) {
+        if (g_shared_gesture) {
+            if (!(GetAsyncKeyState(VK_LBUTTON) & 0x8000) ||
+                GetAncestor(GetForegroundWindow(), GA_ROOT) != g_shared_source) cancel_shared_input();
+        } else if (g_shared_hover) {
+            POINT point{};
+            GetCursorPos(&point);
+            if (shared_mouse_hit(point) != g_shared_hover) cancel_shared_input();
+            else if (GetTickCount64() - g_shared_hover_since >= 250) {
+                ScreenToClient(g_shared_hover->hwnd, &point);
+                g_shared_hover->hints.hover(point);
+            }
+        }
+        return 0;
+    }
+    return DefWindowProcW(hwnd, message, wparam, lparam);
+}
+
+void refresh_shared_input()
+{
+    const bool enabled = std::any_of(std::begin(g_panels), std::end(g_panels), [](const auto* panel) {
+        return panel && panel->visible && panel->appearance.click_through;
+    });
+    if (!enabled) {
+        cancel_shared_input();
+        g_shared_mouse.stop();
+        if (g_shared_window) KillTimer(g_shared_window, kSharedMouseTimer);
+        return;
+    }
+    if (!g_shared_window) {
+        WNDCLASSW window_class{};
+        window_class.hInstance = g_instance;
+        window_class.lpfnWndProc = shared_mouse_proc;
+        window_class.lpszClassName = L"ArkHelper.SharedMouse";
+        if (!RegisterClassW(&window_class) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return;
+        g_shared_window = CreateWindowExW(0, window_class.lpszClassName, L"", 0, 0, 0, 0, 0,
+            HWND_MESSAGE, nullptr, g_instance, nullptr);
+    }
+    if (!g_shared_window || !g_shared_mouse.start(g_shared_window, kSharedMouseMessage)) {
+        log_error("shared panel mouse input could not start, code=%lu", GetLastError());
+        // Keep the panels usable if input observation is unavailable.
+        for (auto* panel : g_panels) if (panel && panel->hwnd)
+            SetWindowLongPtrW(panel->hwnd, GWL_EXSTYLE, GetWindowLongPtrW(panel->hwnd, GWL_EXSTYLE) & ~WS_EX_TRANSPARENT);
+        return;
+    }
+    for (auto* panel : g_panels) if (panel && panel->hwnd && panel->appearance.click_through)
+        SetWindowLongPtrW(panel->hwnd, GWL_EXSTYLE, GetWindowLongPtrW(panel->hwnd, GWL_EXSTYLE) | WS_EX_TRANSPARENT);
+    SetTimer(g_shared_window, kSharedMouseTimer, 60, nullptr);
 }
 
 }  // namespace
@@ -1531,6 +1708,9 @@ void fit_statistics_width(const std::vector<Row>& rows)
 
 void shutdown()
 {
+    cancel_shared_input();
+    g_shared_mouse.stop();
+    if (g_shared_window) { DestroyWindow(g_shared_window); g_shared_window = nullptr; }
     g_dock_groups.clear();
     g_drag_starts.clear();
     for (PanelState* panel : g_panels)
@@ -1836,11 +2016,16 @@ void set_appearance(const wchar_t* id, const FeatureAppearance& appearance)
     if (current.opacity == next.opacity && current.font_size == next.font_size &&
         current.text_color == next.text_color && current.click_through == next.click_through) return;
     const bool font_changed = current.font_size != next.font_size;
+    if (current.click_through != next.click_through) {
+        cancel_shared_input(panel);
+        cancel_interaction(*panel);
+    }
     panel->appearance = next;
     auto style = GetWindowLongPtrW(panel->hwnd, GWL_EXSTYLE);
     style = next.click_through ? style | WS_EX_TRANSPARENT : style & ~WS_EX_TRANSPARENT;
     SetWindowLongPtrW(panel->hwnd, GWL_EXSTYLE, style);
     if (next.click_through) panel->hints.hide();
+    refresh_shared_input();
     if (font_changed) destroy_fonts(*panel);
     if (panel->visible)
     {

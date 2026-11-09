@@ -38,6 +38,9 @@ void configuration(const std::filesystem::path& directory) {
     check(config.damage_sort_metric==arkhelp::ipc::kStatHeal+1,"sort selection changed its metric");
     check(!config.damage_merged && config.damage_panel_width==0,"legacy cramped layout survived migration");
     check(config.damage_compact,"old configuration must use compact table spacing by default");
+    check(!config.damage_show_devices && !config.overlay.operator_show_devices,"old configurations must hide devices in both views");
+    config.damage_show_devices=true;
+    config.overlay.operator_show_devices=true;
     config.damage_compact=false;
     arkhelp::feature_appearance(config,arkhelp::ipc::kFeatureDamageNumbers).click_through=true;
     const auto expected_mask=config.damage_metric_mask;
@@ -75,6 +78,10 @@ void configuration(const std::filesystem::path& directory) {
     check(arkhelp::config_save(path.wstring(),config),"configuration save failed");
     arkhelp::Config restored;
     check(arkhelp::config_load(path.wstring(),restored),"saved configuration did not reload");
+    check(restored.damage_show_devices && restored.overlay.operator_show_devices,"device visibility preferences did not persist");
+    config.overlay.operator_show_devices=false;
+    check(arkhelp::config_save(path.wstring(),config) && arkhelp::config_load(path.wstring(),restored) &&
+        restored.damage_show_devices && !restored.overlay.operator_show_devices,"device settings must persist independently");
     check(!restored.damage_compact && arkhelp::feature_appearance(restored,arkhelp::ipc::kFeatureDamageNumbers).click_through &&
         !arkhelp::feature_appearance(restored,arkhelp::ipc::kFeatureWiki).click_through,
         "compact spacing and per-panel click-through must persist independently");

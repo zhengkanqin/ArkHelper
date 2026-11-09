@@ -4,6 +4,7 @@
 #include <cstring>
 #include "../capture/capture.h"
 #include "../../damage_meter/stats.h"
+#include "../../common/operator_identity.h"
 
 namespace ark::arkhelper::ipc_publish {
 inline void attach_operator_instances(::arkhelp::ipc::BattleSnapshot& snapshot,
@@ -24,7 +25,7 @@ inline void attach_operator_instances(::arkhelp::ipc::BattleSnapshot& snapshot,
         const auto index = snapshot.operator_count++;
         auto& entry = snapshot.operators[index]; entry = {};
         snapshot.operator_ids[index] = op.instance_id;
-        entry.flags = ipc::kDamageValid | ipc::kDamageScreenValid;
+        entry.flags = ipc::kDamageValid | ipc::kDamageScreenValid | (is_device_id(op.actor_id) ? ipc::kDamageDevice : 0u);
         entry.metric_mask = supported;
         std::memcpy(entry.actor_id, op.actor_id, sizeof(op.actor_id));
         entry.screen = {static_cast<std::int32_t>(std::lround(op.viewport_x * width)),
@@ -67,7 +68,7 @@ inline void attach_operator_positions(::arkhelp::ipc::BattleSnapshot& snapshot,
             if (row >= ipc::kMaxDamageRows) { snapshot.stats_flags |= 2u; continue; }
             auto& entry = snapshot.damage[snapshot.damage_count++];
             entry = {};
-            entry.flags = ipc::kDamageValid;
+            entry.flags = ipc::kDamageValid | (is_device_id(op.actor_id) ? ipc::kDamageDevice : 0u);
             entry.metric_mask = supported;
             std::memcpy(entry.actor_id, op.actor_id, sizeof(op.actor_id));
         }

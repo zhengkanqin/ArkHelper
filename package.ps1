@@ -1,7 +1,7 @@
 <# .SYNOPSIS Builds and packages the complete portable ArkHelper application. #>
 [CmdletBinding()]
 param(
-    [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+$')][string]$Version = '1.1.0',
+    [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+$')][string]$Version = '1.2.0',
     [switch]$SkipTests
 )
 $ErrorActionPreference = 'Stop'
@@ -49,7 +49,7 @@ $manifest = [ordered]@{
     product = 'ArkHelper'
     version = $Version
     architecture = 'windows-x64'
-    ipc_version = 8
+    ipc_version = 9
     stage_overview_version = 1
     files = @(Get-ChildItem -LiteralPath $Payload -Recurse -File | Sort-Object FullName | ForEach-Object {
         [ordered]@{

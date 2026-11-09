@@ -50,6 +50,11 @@ int wmain() {
             event.kind = ARK_BATTLE_START;
             std::strcpy(event.stage_id, "fixture");
             history.publish(event);
+            event.kind = ARK_DAMAGE;
+            event.damage_type = ARK_DAMAGE_PHYSICAL;
+            event.actual_damage = event.calculated_damage = round * 125;
+            std::strcpy(event.actor_id, "trap_fixture");
+            history.publish(event);
             event = {};
             event.kind = ARK_DAMAGE;
             event.damage_type = ARK_DAMAGE_PHYSICAL;
@@ -69,8 +74,10 @@ int wmain() {
                     const auto* view = static_cast<const BattleSnapshot*>(MapViewOfFile(mapping,
                         FILE_MAP_READ, 0, 0, sizeof(BattleSnapshot)));
                     BattleSnapshot snapshot{};
-                    ready = view && read_snapshot(*view, snapshot) && snapshot.damage_count == 1 &&
-                        snapshot.team_metrics[kStatDamage] == round * 321 && snapshot.team_metrics[kStatCost] == 7;
+                    ready = view && read_snapshot(*view, snapshot) && snapshot.damage_count == 2 &&
+                        snapshot.team_metrics[kStatDamage] == round * 446 && snapshot.team_metrics[kStatCost] == 7 &&
+                        snapshot.device_metrics[kStatDamage] == round * 125 &&
+                        !(snapshot.damage[0].flags & kDamageDevice) && (snapshot.damage[1].flags & kDamageDevice);
                     if (view) UnmapViewOfFile(view);
                     CloseHandle(mapping);
                 }

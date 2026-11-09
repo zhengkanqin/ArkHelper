@@ -19,6 +19,7 @@ struct DamageConfig
     std::uint32_t metric_mask = statistics::kCommonMetrics; // stable StatMetric identities
     bool merged = false;                // true: first selected metric; false: selected table columns
     bool compact = true;
+    bool show_devices = false;
     int sort_metric = 0;                // 0: total damage, otherwise StatMetric+1 descending
     std::wstring order = L"total,physical,arts,true,heal,element";
 };

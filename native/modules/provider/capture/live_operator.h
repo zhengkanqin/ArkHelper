@@ -41,6 +41,7 @@ class OperatorReader {
         void* uid = nullptr;
         void* dummy = nullptr;
         void* token = nullptr;
+        void* host = nullptr;
     };
     std::array<Access, 32> cache_{};
     std::size_t next_ = 0;
@@ -55,6 +56,7 @@ class OperatorReader {
         entry.uid = method(rt, klass, "get_instanceUid");
         entry.dummy = method(rt, klass, "get_isDummy");
         entry.token = method(rt, klass, "get_isToken");
+        entry.host = method(rt, klass, "FetchHost");
         return entry;
     }
     static bool boolean(il2cpp::Runtime& rt, void* object, void* method, bool expected) {
@@ -65,7 +67,7 @@ class OperatorReader {
     }
 public:
     void clear() { cache_ = {}; next_ = 0; }
-    bool read(il2cpp::Runtime& rt, void* object, std::string& id, std::uint64_t& uid) {
+    bool read(il2cpp::Runtime& rt, void* object, std::string& id, std::uint64_t& uid, bool include_devices = false) {
         uid = 0;
         if (!object) return false;
         const Access entry = access(rt, rt.object_class(object));
@@ -73,7 +75,12 @@ public:
             (entry.dummy && !boolean(rt, object, entry.dummy, false)) ||
             !boolean(rt, object, entry.born, true) || !boolean(rt, object, entry.disappeared, false)) return false;
         id = text(rt, rt.invoke(entry.id, object));
-        if (!is_operator_id(id) || (entry.token && !boolean(rt, object, entry.token, false))) return false;
+        if (entry.token && !boolean(rt, object, entry.token, false)) return false;
+        if (!is_operator_id(id)) {
+            if (!include_devices || !is_device_id(id)) return false;
+            void* host = entry.host ? rt.invoke(entry.host, object) : nullptr;
+            if (host && host != object) return false;
+        }
         void* boxed_uid = rt.invoke(entry.uid, object);
         if (!boxed_uid) return false;
         const auto uid_type = rt.klass_name(rt.object_class(boxed_uid));
