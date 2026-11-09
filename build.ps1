@@ -150,6 +150,9 @@ if ($Target -eq 'Tests' -or ($Target -eq 'All' -and -not $SkipTests)) {
     Link (Join-Path $Tests 'lifecycle_tests.exe') (@(Compile 'tests\native\lifecycle_tests.cpp') + $lifecycleObjects) -Wide
     Link (Join-Path $Tests 'native_hook_tests.exe') (@(Compile 'tests\native\native_hook_tests.cpp') + @(Compile-All $NativeHooks) + $MinHookObjects) -Wide
     Link (Join-Path $Tests 'builtin_module_tests.exe') (@(Compile 'tests\builtin_module_tests.cpp') + @(Compile-All $Lifecycle) + $MinHookObjects) -Wide
+    Link (Join-Path $Tests 'production_statistics_tests.exe') (@(Compile 'tests\production_statistics_tests.cpp') +
+        @(Compile-All $Lifecycle) + $MinHookObjects + @(Compile-All @(Get-Sources 'native\modules\provider' -Recurse)) +
+        @(Compile 'native\modules\common\il2cpp_runtime.cpp'; Compile 'src\ipc\ipc.cpp')) @('-luser32') -Wide
     Link (Join-Path $Tests 'ipc_tests.exe') @(Compile 'tests\ipc_tests.cpp'; Compile 'src\ipc\ipc.cpp') -Wide
     Link (Join-Path $Tests 'feature_command_gate_tests.exe') @(
         Compile 'tests\feature_command_gate_tests.cpp' '' @() @('src\shell\ipc_client.cpp')
@@ -211,6 +214,7 @@ if ($Target -eq 'Tests' -or ($Target -eq 'All' -and -not $SkipTests)) {
     Run-Test 'lifecycle_tests' @($Tests)
     Run-Test 'native_hook_tests' @($Tests)
     Run-Test 'builtin_module_tests'
+    Run-Test 'production_statistics_tests'
     Run-Test 'ipc_tests'
     Run-Test 'feature_command_gate_tests'
     Run-Test 'enemy_publication_tests'

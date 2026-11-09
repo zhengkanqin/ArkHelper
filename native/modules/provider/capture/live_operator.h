@@ -1,6 +1,7 @@
 #pragma once
 #include <array>
 #include "live_data.h"
+#include "../../common/operator_identity.h"
 
 namespace ark::arkhelper::capture::live {
 
@@ -39,6 +40,7 @@ class OperatorReader {
         void* disappeared = nullptr;
         void* uid = nullptr;
         void* dummy = nullptr;
+        void* token = nullptr;
     };
     std::array<Access, 32> cache_{};
     std::size_t next_ = 0;
@@ -52,6 +54,7 @@ class OperatorReader {
         entry.disappeared = method(rt, klass, "get_isDisappeared");
         entry.uid = method(rt, klass, "get_instanceUid");
         entry.dummy = method(rt, klass, "get_isDummy");
+        entry.token = method(rt, klass, "get_isToken");
         return entry;
     }
     static bool boolean(il2cpp::Runtime& rt, void* object, void* method, bool expected) {
@@ -70,6 +73,7 @@ public:
             (entry.dummy && !boolean(rt, object, entry.dummy, false)) ||
             !boolean(rt, object, entry.born, true) || !boolean(rt, object, entry.disappeared, false)) return false;
         id = text(rt, rt.invoke(entry.id, object));
+        if (!is_operator_id(id) || (entry.token && !boolean(rt, object, entry.token, false))) return false;
         void* boxed_uid = rt.invoke(entry.uid, object);
         if (!boxed_uid) return false;
         const auto uid_type = rt.klass_name(rt.object_class(boxed_uid));

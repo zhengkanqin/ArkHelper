@@ -12,7 +12,7 @@
 #include <cstdio>
 
 namespace {
-struct Actor { const wchar_t* id; int uid; bool friendly; };
+struct Actor { const wchar_t* id; int uid; bool friendly; Actor* host = nullptr; bool token = false; };
 struct Controller { int state = 2; };
 struct Modifier { std::int64_t real; Actor* source; Actor* target; int type = ARK_DAMAGE_PHYSICAL; };
 double clock_time = 0;
@@ -51,6 +51,8 @@ int main() {
         b.string_chars = [](void* value) -> const wchar_t* { return static_cast<wchar_t*>(value); };
         b.character_id = [](void* actor, void*) -> void* { return const_cast<wchar_t*>(static_cast<Actor*>(actor)->id); };
         b.instance_uid = [](void* actor,void*) -> std::uint32_t { return static_cast<Actor*>(actor)->uid; };
+        b.fetch_host = [](void* actor,void*) -> void* { return static_cast<Actor*>(actor)->host; };
+        b.is_token = [](void* actor,void*) { return static_cast<Actor*>(actor)->token; };
         b.object_class = [](void* actor) -> void* { return static_cast<Actor*>(actor)->friendly ? &character_class : nullptr; };
         b.assignable = [](void* klass,void* candidate) { return klass == candidate; };
         b.is_cancelled = [](void*,void*) { return false; };
@@ -111,6 +113,27 @@ int main() {
         cap::OperatorSample fresh{};fresh.instance_id=700;std::strcpy(fresh.actor_id,"char_219_meteo");fresh.flags=1;fresh.viewport_x=.5f;fresh.viewport_y=.5f;
         ark::arkhelper::ipc_publish::attach_operator_instances(snapshot,&fresh,1,stats,~0u,1000,500);
         check(snapshot.operator_count==1 && snapshot.operators[0].total_damage==0,"a newly deployed clone must not inherit another instance's damage");
+        capture.begin_battle(&controller,false);
+        Actor token{L"token_fixture",9001,true,&first,true};
+        Actor derivative{L"trap_fixture",9002,true,&second,true};
+        Actor device{L"trap_stage_device",9003,true};
+        damage={25LL<<32,&token,&enemy}; capture.record_damage(&history,&damage,false);
+        damage.source=&derivative;damage.real=40LL<<32;capture.record_damage(&history,&damage,false);
+        damage.source=&device;damage.real=1000LL<<32;capture.record_damage(&history,&damage,false);
+        replay(history,stats);
+        check(stats.rows.size()==1 && stats.total(true)==65,"summon totals belong to operators and stage devices are excluded");
+        check(stats.instances.at(first.uid).actual==25 && stats.instances.at(second.uid).actual==40,
+              "two identical summoners must keep their own summons' contributions");
+        check(!stats.instances.count(token.uid) && !stats.instances.count(device.uid),"summons and devices must not create separate rows");
+        damage.source=&token;damage.type=ARK_DAMAGE_HEAL;damage.real=10LL<<32;capture.record_damage(&history,&damage,false);
+        damage.source=&enemy;damage.target=&token;damage.type=ARK_DAMAGE_PHYSICAL;damage.real=5LL<<32;capture.record_damage(&history,&damage,false);
+        capture.record_cost(&controller,&token,6);
+        replay(history,stats);
+        check(stats.instances.at(first.uid).healing==10 && stats.instances.at(first.uid).taken==5 &&
+              stats.instances.at(first.uid).deployment_points==6,"summon support metrics must follow the same exact owner");
+        token.host=&token;damage.source=&token;damage.target=&enemy;damage.real=1000LL<<32;
+        capture.record_damage(&history,&damage,false);replay(history,stats);
+        check(stats.total(true)==65,"cyclic or unresolved host links must not guess an operator");
         std::printf("AutoChess production capture: %u checks passed; IPC=%zu\n",checks,sizeof(snapshot));
     } catch(const std::exception& error) { std::fprintf(stderr,"FAIL %s\n",error.what());return 1; }
 }

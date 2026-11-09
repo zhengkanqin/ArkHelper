@@ -45,6 +45,7 @@ int wmain(int argc, wchar_t** argv) {
         callbacks.on_damage_config = [&](const DamageConfig& value) {
             config.damage_metric_mask=value.metric_mask; config.damage_order=value.order;
             config.damage_merged=value.merged; config.damage_sort_metric=value.sort_metric;
+            config.damage_compact=value.compact;
         };
         callbacks.on_appearance = [&](std::uint32_t bit,const FeatureAppearance& value) {
             feature_appearance(config,bit)=value;
@@ -309,6 +310,18 @@ int wmain(int argc, wchar_t** argv) {
         save(L"menu-main-customized.bmp");
         menu_open_config(ipc::kFeatureDamageNumbers);
         save(L"menu-statistics-top.bmp");
+        for (const auto bit : {ipc::kFeatureDamageNumbers,ipc::kFeatureSpawnList,ipc::kFeatureWiki,ipc::kFeatureEnemyPrts}) {
+            menu_open_config(bit);
+            click_rect(row_switch(click_through_row()),HitTarget::kClickThrough);
+            if(!feature_appearance(config,bit).click_through) throw std::runtime_error("menu cannot enable this panel's click-through");
+            click_rect(row_switch(click_through_row()),HitTarget::kClickThrough);
+            if(feature_appearance(config,bit).click_through) throw std::runtime_error("menu cannot restore panel interaction");
+        }
+        menu_open_config(ipc::kFeatureDamageNumbers);
+        click_rect(row_switch(damage_row_rect(g_menu.layout,ipc::kStatCount+3)),HitTarget::kDamageCompact);
+        if(config.damage_compact) throw std::runtime_error("menu cannot disable compact table spacing");
+        click_rect(row_switch(damage_row_rect(g_menu.layout,ipc::kStatCount+3)),HitTarget::kDamageCompact);
+        if(!config.damage_compact) throw std::runtime_error("menu cannot restore compact table spacing");
         if (g_menu.viewport.maximum_scroll() <= 0) throw std::runtime_error("long statistics configuration cannot scroll");
         const auto fixed_footer = g_menu.layout.back_button;
         const auto order=statistics::parse_order(config.damage_order);
@@ -360,7 +373,7 @@ int wmain(int argc, wchar_t** argv) {
         FeatureAppearance custom;custom.opacity=60;custom.font_size=32;custom.text_color=0x12ABCD;
         panels::set_appearance(panels::kDamagePanelId,custom);
         panels::render(*panel);
-        if(panels::row_height(*panel)<panel->measured_row_height+panels::S(*panel,8) ||
+        if(panels::row_height(*panel)<panel->measured_row_height+panels::S(*panel,4) ||
            panels::title_height(*panel)<panel->measured_title_height+panels::S(*panel,10))
             throw std::runtime_error("custom panel font is taller than its row or title");
         if(panels::panel_alpha(*panel)!=153 || panels::panel_text_color(*panel,RGB(255,255,255))!=RGB(0x12,0xAB,0xCD))
@@ -372,8 +385,20 @@ int wmain(int argc, wchar_t** argv) {
         save_review_bitmap(panel->surface,destination/L"panel-statistics-large-font.bmp");
         panels::set_appearance(panels::kDamagePanelId,{});
         panels::render(*panel);
-        if(panels::panel_alpha(*panel)!=255 || panels::row_height(*panel)!=panels::S(*panel,30))
+        if(panels::panel_alpha(*panel)!=255 || panels::row_height(*panel)!=panels::S(*panel,24))
             throw std::runtime_error("panel default appearance did not restore");
+        panels::set_statistics_compact(false);
+        if(panels::row_height(*panel)!=panels::S(*panel,30)) throw std::runtime_error("loose row spacing is not available");
+        panels::set_statistics_compact(true);
+        const int manual_width=panel->width_override_px;
+        FeatureAppearance transparent;transparent.opacity=55;transparent.text_color=0x556677;
+        transparent.click_through=true;
+        panels::set_appearance(panels::kDamagePanelId,transparent);
+        if(!(GetWindowLongPtrW(panel->hwnd,GWL_EXSTYLE)&WS_EX_TRANSPARENT) || panel->width_override_px!=manual_width)
+            throw std::runtime_error("click-through did not use the layered window style or appearance reset manual width");
+        panels::set_appearance(panels::kDamagePanelId,{});
+        if(GetWindowLongPtrW(panel->hwnd,GWL_EXSTYLE)&WS_EX_TRANSPARENT)
+            throw std::runtime_error("click-through cannot be switched back off");
         panel->width_override_px=panels::S(*panel,260);
         panel->ui_scale=100;
         panels::destroy_fonts(*panel);

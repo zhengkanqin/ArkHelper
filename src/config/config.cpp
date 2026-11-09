@@ -339,6 +339,7 @@ bool config_load(const std::wstring& path, Config& out)
         if (find_integer(text, (prefix + "text_color").c_str(), value)) appearance.text_color = value >= 0 && value <= 0xffffff ? value : -1;
         if (find_integer(text, (prefix + "line_width").c_str(), value)) appearance.line_width = std::clamp(value, 1, 8);
         if (find_integer(text, (prefix + "line_style").c_str(), value)) appearance.line_style = std::clamp(value, 0, 2);
+        if (find_integer(text, (prefix + "click_through").c_str(), value)) appearance.click_through = value != 0;
     }
     if (find_integer(text, "ui_scale", value))
     {
@@ -403,6 +404,7 @@ bool config_load(const std::wstring& path, Config& out)
     {
         out.damage_metric_mask = static_cast<uint32_t>(value) & statistics::kAllMetrics;
     }
+    if (find_integer(text, "damage_compact", value)) out.damage_compact = value != 0;
     if (find_integer(text, "damage_merged", value))
     {
         out.damage_merged = value != 0;
@@ -562,8 +564,10 @@ bool config_save(const std::wstring& path, const Config& config)
         contents += ",\n    \"" + prefix + "_text_color\": " + std::to_string(appearance.text_color);
         contents += ",\n    \"" + prefix + "_line_width\": " + std::to_string(appearance.line_width);
         contents += ",\n    \"" + prefix + "_line_style\": " + std::to_string(appearance.line_style);
+        contents += ",\n    \"" + prefix + "_click_through\": " + std::to_string(appearance.click_through ? 1 : 0);
     }
     const auto& drawing=config.overlay;
+    contents += ",\n    \"damage_compact\": " + std::to_string(config.damage_compact ? 1 : 0);
     const auto append_int=[&](const char* name,int number) {
         contents+=",\n    \""+std::string(name)+"\": "+std::to_string(number);
     };

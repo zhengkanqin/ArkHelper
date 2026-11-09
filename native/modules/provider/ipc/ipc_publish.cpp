@@ -98,7 +98,6 @@ constexpr std::uint32_t kLogError = 3;
 constexpr std::uint64_t kPublishIntervalMs = 100;
 constexpr std::uint64_t kMappingRetryMs = 2000;
 constexpr std::uint64_t kCommandOpenRetryMs = 2000;
-constexpr std::uint64_t kServiceRetryMs = 2000;
 constexpr double kFramesPerSecond = 30.0;
 constexpr std::uint32_t kDefaultFeatureMask = ipc::kFeatureSpawnTimer | ipc::kFeatureSpawnCard |
                                              ipc::kFeatureDamageNumbers;
@@ -132,10 +131,6 @@ std::string g_following_level;
 ark::damage_meter::BattleStats g_statistics;
 std::uint64_t g_last_sequence = 0;
 
-using WithServiceFn = bool (*)(const char* name, std::uint32_t abi_version,
-                               std::size_t minimum_size, ArkServiceCallback callback, void* user);
-WithServiceFn g_with_service = nullptr;
-std::uint64_t g_last_service_attempt = 0;
 bool g_service_missing_logged = false;
 
 std::uint32_t g_mapping_error_logged = 0;
@@ -287,66 +282,19 @@ void refresh_commands() {
 
 // --- damage rows -----------------------------------------------------------------------------
 
-struct ReadContext {
-    bool ok = false;
-    std::size_t events = 0;
-};
-
-void read_events_callback(const void* table, void* user) {
-    auto* context = static_cast<ReadContext*>(user);
-    if (!table || !context) {
-        return;
-    }
-    const auto* api = static_cast<const ArkBattleEventsApiV1*>(table);
-    if (api->size < sizeof(ArkBattleEventsApiV1) || api->abi_version != ARK_BATTLE_ABI_VERSION ||
-        !api->read) {
-        return;
-    }
-    context->events += read_statistics_events(api->read, g_statistics, g_last_sequence);
-    context->ok = true;
-}
-
-HMODULE find_core_module() {
-    // The provider is linked into the runtime itself; resolve its owning module.
-    HMODULE owner = nullptr;
-    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                          GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                      reinterpret_cast<LPCWSTR>(&find_core_module), &owner);
-    return owner;
-}
 void accumulate_damage() {
-    if (!g_with_service) {
-        const std::uint64_t now = GetTickCount64();
-        if (now - g_last_service_attempt < kServiceRetryMs) {
-            return;
-        }
-        g_last_service_attempt = now;
-        HMODULE module = find_core_module();
-        if (module) {
-            FARPROC function = GetProcAddress(module, "arkhelp_runtime_with_service");
-            if (function) {
-                g_with_service = reinterpret_cast<WithServiceFn>(function);
-            }
-        }
-        if (!g_with_service) {
-            if (!g_service_missing_logged) {
-                g_service_missing_logged = true;
-                log(kLogInfo, "未找到核心服务入口，damage 区留空（其它功能不受影响）");
-            }
-            return;
-        }
-    }
-
-    ReadContext context;
-    const bool ok = g_with_service(ARK_BATTLE_SERVICE_NAME, ARK_BATTLE_ABI_VERSION,
-                                   sizeof(ArkBattleEventsApiV1), &read_events_callback, &context);
-    if (!ok) {
-        g_with_service = nullptr;  // provider missing/unloaded: retry later, keep the rows empty.
+    if (!g_host || !g_host->require_service) return;
+    const auto* api = static_cast<const ArkBattleEventsApiV1*>(g_host->require_service(
+        g_host->owner, ARK_BATTLE_SERVICE_NAME, ARK_BATTLE_ABI_VERSION, sizeof(ArkBattleEventsApiV1)));
+    if (!api || api->size < sizeof(*api) || api->abi_version != ARK_BATTLE_ABI_VERSION || !api->read) {
         if (!g_service_missing_logged) {
             g_service_missing_logged = true;
-            log(kLogInfo, "ark.battle.events 暂不可用（damage_meter 未加载），damage 区留空");
+            log(kLogError, "内置统计服务不可用，统计暂未接入");
         }
+        return;
     }
+    read_statistics_events(api->read, g_statistics, g_last_sequence);
+    g_service_missing_logged = false;
 }
 
 // --- snapshot --------------------------------------------------------------------------------
@@ -979,8 +927,6 @@ void shutdown() {
     g_following_level.clear();
     g_statistics = {};
     g_last_sequence = 0;
-    g_with_service = nullptr;
-    g_last_service_attempt = 0;
     g_service_missing_logged = false;
     g_mapping_error_logged = 0;
     g_tick_error_logged = false;

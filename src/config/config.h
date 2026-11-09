@@ -20,6 +20,7 @@ struct FeatureAppearance
     std::int32_t text_color = -1; // 0xRRGGBB; -1 keeps semantic/default colours
     int line_width = 2;     // logical pixels, 1..8; line features only
     int line_style = 0;     // 0 solid, 1 dashed, 2 dotted
+    bool click_through = false; // floating data panels; configured from the main menu
     bool operator==(const FeatureAppearance&) const = default;
 };
 
@@ -107,6 +108,7 @@ struct Config
     // Sort 0 uses total damage, otherwise StatMetric+1. Reordering never changes either selection.
     uint32_t damage_metric_mask = (1u << 0) | (1u << 4) | (1u << 6) | (1u << 10) | (1u << 11);
     bool damage_merged = false;
+    bool damage_compact = true;
     int damage_sort_metric = 0;
     std::wstring damage_order = L"total,physical,arts,true,heal,element,cost,buildup,taken,shield,dps,share";
     bool auto_launch = true;  // 启动助手时启动一次游戏；已运行时仅连接

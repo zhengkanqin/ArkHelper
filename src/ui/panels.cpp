@@ -72,6 +72,7 @@ struct PanelState
     int dpi = 96;
     int ui_scale = 100;
     FeatureAppearance appearance;
+    bool compact = true;
     int measured_row_height = 0;
     int measured_title_height = 0;
 
@@ -152,7 +153,8 @@ int S(const PanelState& panel, int logical)
 
 int row_height(const PanelState& panel)
 {
-    return std::max(S(panel, kRowHeightLogical), panel.measured_row_height + S(panel, 8));
+    const bool compact = panel.id == kDamagePanelId && panel.compact;
+    return std::max(S(panel, compact ? 24 : kRowHeightLogical), panel.measured_row_height + S(panel, compact ? 4 : 8));
 }
 
 int title_height(const PanelState& panel)
@@ -170,7 +172,7 @@ std::vector<int> measure_statistics(const PanelState& panel, const std::vector<R
 {
     std::size_t count = 0;
     for (const auto& row : rows) if (row.cells.size() > 1) count = std::max(count, row.cells.size());
-    std::vector<int> widths(count, S(panel, 36));
+    std::vector<int> widths(count, S(panel, panel.compact ? 28 : 36));
     HDC dc = CreateCompatibleDC(nullptr);
     if (!dc) return widths;
     const auto old = SelectObject(dc, panel.row_font);
@@ -179,7 +181,7 @@ std::vector<int> measure_statistics(const PanelState& panel, const std::vector<R
         for (std::size_t i = 0; i < row.cells.size(); ++i) {
             SIZE size{};
             GetTextExtentPoint32W(dc, row.cells[i].c_str(), static_cast<int>(row.cells[i].size()), &size);
-            widths[i] = std::max(widths[i], static_cast<int>(size.cx) + S(panel, 12));
+            widths[i] = std::max(widths[i], static_cast<int>(size.cx) + S(panel, panel.compact ? 8 : 12));
         }
     }
     SelectObject(dc, old); DeleteDC(dc);
@@ -296,7 +298,7 @@ void layout(PanelState& panel)
     const int numeric_width = std::max(1, width - S(panel, 12) - name_width);
     panel.max_horizontal = std::max(0, numeric_total - numeric_width);
     // Only distribute spare space after every column has been measured tightly.
-    if (!panel.max_horizontal && panel.statistics_columns.size() > 1) {
+    if (!panel.compact && !panel.max_horizontal && panel.statistics_columns.size() > 1) {
         int spare = std::max(0, numeric_width - numeric_total);
         for (std::size_t i = 1; i < panel.statistics_columns.size(); ++i) {
             const int extra = spare / static_cast<int>(panel.statistics_columns.size() - i);
@@ -1832,9 +1834,13 @@ void set_appearance(const wchar_t* id, const FeatureAppearance& appearance)
     next.text_color = next.text_color < 0 ? -1 : next.text_color & 0xFFFFFF;
     const auto& current = panel->appearance;
     if (current.opacity == next.opacity && current.font_size == next.font_size &&
-        current.text_color == next.text_color) return;
+        current.text_color == next.text_color && current.click_through == next.click_through) return;
     const bool font_changed = current.font_size != next.font_size;
     panel->appearance = next;
+    auto style = GetWindowLongPtrW(panel->hwnd, GWL_EXSTYLE);
+    style = next.click_through ? style | WS_EX_TRANSPARENT : style & ~WS_EX_TRANSPARENT;
+    SetWindowLongPtrW(panel->hwnd, GWL_EXSTYLE, style);
+    if (next.click_through) panel->hints.hide();
     if (font_changed) destroy_fonts(*panel);
     if (panel->visible)
     {
@@ -1842,6 +1848,14 @@ void set_appearance(const wchar_t* id, const FeatureAppearance& appearance)
         position_and_present(*panel);
         restack_after(*panel);
     }
+}
+
+void set_statistics_compact(bool compact)
+{
+    auto* panel = find(kDamagePanelId);
+    if (!panel || panel->compact == compact) return;
+    panel->compact = compact;
+    if (panel->visible) { render(*panel); position_and_present(*panel); restack_after(*panel); }
 }
 
 void update(const wchar_t* id, const std::wstring& title, const std::vector<Row>& rows, bool visible)

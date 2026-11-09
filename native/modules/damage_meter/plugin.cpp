@@ -128,7 +128,7 @@ extern "C" const ArkPluginInfoV1* arkhelp_damage_query() {
         .abi_version = ARK_ABI_VERSION,
         .imgui_version = ARK_MODULE_COMPAT_VERSION,
         .name = "Damage Meter",
-        .version = "1.0.0",
+        .version = "1.1.0",
         .author = "ArkHelperRuntime",
         .flags = ARK_PLUGIN_DEFAULT,
     };

@@ -77,6 +77,8 @@ enum class HitTarget
     kAppearanceFont = 201,
     kAppearanceColor = 202,
     kAppearanceReset = 203,
+    kClickThrough = 204,
+    kDamageCompact = 205,
     kWikiFieldFirst = 300,
     kWikiFieldsDefault = 320,
     kWikiFieldsNone = 321,
@@ -211,11 +213,17 @@ void create_fonts()
     g_menu.font_scale = g_menu.ui_scale;
 }
 
+bool floating_panel_page()
+{
+    return g_menu.config_bit == ipc::kFeatureDamageNumbers || g_menu.config_bit == ipc::kFeatureSpawnList ||
+        g_menu.config_bit == ipc::kFeatureWiki || g_menu.config_bit == ipc::kFeatureEnemyPrts;
+}
+
 int appearance_height()
 {
     if (g_menu.config_bit == ipc::kFeatureEnemyRange) return 130;
     if (g_menu.config_bit == ipc::kFeatureEnemyPaths) return 174;
-    return kAppearanceHeight;
+    return kAppearanceHeight + (floating_panel_page() ? 36 : 0);
 }
 
 int page_content_height()
@@ -228,9 +236,9 @@ int page_content_height()
     if (g_menu.config_bit == ipc::kFeatureEnemyPaths) return S(174+280);
     if (g_menu.config_bit == ipc::kFeatureEnemyRange) return S(130+200);
     if (g_menu.config_bit == ipc::kFeatureDamageNumbers)
-        return S(kAppearanceHeight + 48 + 30 * ipc::kStatCount + 3 * 36 + 8);
-    if (g_menu.config_bit == ipc::kFeatureWiki) return S(kAppearanceHeight + 32 + 12 * 32 + 44);
-    if (g_menu.config_bit == ipc::kFeatureEnemyPrts) return S(kAppearanceHeight + 32 + 14 * 32 + 44);
+        return S(appearance_height() + 48 + 30 * ipc::kStatCount + 4 * 36 + 8);
+    if (g_menu.config_bit == ipc::kFeatureWiki) return S(appearance_height() + 32 + 12 * 32 + 44);
+    if (g_menu.config_bit == ipc::kFeatureEnemyPrts) return S(appearance_height() + 32 + 14 * 32 + 44);
     return S(appearance_height() + 96);
 }
 
@@ -738,6 +746,10 @@ void draw_damage_config_page(HDC dc) {
     auto preset=damage_row_rect(layout,ipc::kStatCount+2);
     draw_option_button(dc,preset,L"显示预设：常用 / 伤害 / 辅助 / 全部",
         theme::kCard,theme::kCardHover,theme::kTextPrimary,g_menu.hover==static_cast<int>(HitTarget::kDamagePreset));
+    const auto density = damage_row_rect(layout,ipc::kStatCount+3);
+    draw_text(dc,L"紧凑布局",RECT{density.left+S(8),density.top,density.right-S(60),density.bottom},
+              g_menu.body_font,theme::kTextPrimary,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+    draw_damage_row_toggle(dc,density,config.compact);
 }
 
 HitTarget hit_test_damage_config(POINT point) {
@@ -758,6 +770,8 @@ HitTarget hit_test_damage_config(POINT point) {
     if(PtInRect(&row,point)) return HitTarget::kDamageSort;
     row=damage_row_rect(layout,ipc::kStatCount+2);
     if(PtInRect(&row,point)) return HitTarget::kDamagePreset;
+    row=damage_row_rect(layout,ipc::kStatCount+3);
+    if(hit_row_switch(row,point)) return HitTarget::kDamageCompact;
     return HitTarget::kNone;
 }
 
@@ -963,6 +977,14 @@ COLORREF rgb_color(std::int32_t color)
     return RGB((color>>16)&255,(color>>8)&255,color&255);
 }
 
+RECT click_through_row()
+{
+    const auto& layout = g_menu.layout;
+    const int top = layout.viewport.top + S(kAppearanceHeight-2);
+    return {layout.content.left+layout.padding, top,
+        layout.content.right-layout.padding, top+S(30)};
+}
+
 void draw_appearance_page(HDC dc)
 {
     const auto& layout=g_menu.layout;
@@ -1004,6 +1026,12 @@ void draw_appearance_page(HDC dc)
         g_menu.appearance.text_color>=0?rgb_color(g_menu.appearance.text_color):theme::kTextPrimary);
     draw_option_button(dc,layout.appearance_reset,L"恢复本功能外观默认",theme::kCard,theme::kCardHover,
                        theme::kTextSecondary,g_menu.hover==static_cast<int>(HitTarget::kAppearanceReset));
+    if (floating_panel_page()) {
+        const auto row = click_through_row();
+        draw_text(dc,L"窗口点击穿透（菜单中关闭）",RECT{row.left+S(8),row.top,row.right-S(60),row.bottom},
+            g_menu.body_font,theme::kTextPrimary,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+        draw_damage_row_toggle(dc,row,g_menu.appearance.click_through);
+    }
     fill_rect(dc,RECT{left,top+S(appearance_height()-6),right,top+S(appearance_height()-5)},theme::kDivider);
 }
 
@@ -1317,6 +1345,7 @@ HitTarget hit_test(POINT point)
             if(PtInRect(&layout.appearance_color,point)) return HitTarget::kAppearanceColor;
         }
         if(PtInRect(&layout.appearance_reset,point)) return HitTarget::kAppearanceReset;
+        if(floating_panel_page() && hit_row_switch(click_through_row(),point)) return HitTarget::kClickThrough;
         if(g_menu.config_bit==ipc::kFeatureWiki || g_menu.config_bit==ipc::kFeatureEnemyPrts)
         {
             for(int i=0;i<static_cast<int>(wiki_page_fields().size());++i)
@@ -1623,6 +1652,14 @@ void activate_target(HitTarget target)
             g_menu.auto_launch=!g_menu.auto_launch;
             if(g_menu.callbacks.on_auto_launch) g_menu.callbacks.on_auto_launch(g_menu.auto_launch);
             render();return;
+        }
+        if (target == HitTarget::kClickThrough) {
+            g_menu.appearance.click_through = !g_menu.appearance.click_through;
+            apply_appearance(); render(); return;
+        }
+        if (target == HitTarget::kDamageCompact) {
+            g_menu.damage.compact = !g_menu.damage.compact;
+            apply_damage_config(); render(); return;
         }
         if (target == HitTarget::kAppearanceFont)
         {

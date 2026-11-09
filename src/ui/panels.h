@@ -77,6 +77,7 @@ void fit_width(const wchar_t* id, int logical_width);
 void set_closeable(const wchar_t* id, bool closeable);
 // 每个面板单独应用透明度、逻辑字号及 0xRRGGBB 文字颜色（-1 默认）。
 void set_appearance(const wchar_t* id, const FeatureAppearance& appearance);
+void set_statistics_compact(bool compact);
 
 // 界面缩放变化时重建字体/尺寸。
 void refresh_theme(int ui_scale);

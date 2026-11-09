@@ -12,6 +12,7 @@
 #include <type_traits>
 
 #include "../common/il2cpp_exports.h"
+#include "../common/operator_identity.h"
 
 namespace ark::damage_meter {
 namespace {
@@ -118,6 +119,8 @@ struct NativeCapture::Bindings {
     ReferenceGetter source = nullptr;
     ReferenceGetter target = nullptr;
     ReferenceGetter character_id = nullptr;
+    ReferenceGetter fetch_host = nullptr;
+    BoolGetter is_token = nullptr;
     ReferenceGetter level_id = nullptr;
     IntGetter damage_type = nullptr;
     UidGetter instance_uid = nullptr;
@@ -136,6 +139,8 @@ struct NativeCapture::Bindings {
     void* is_heal_info = nullptr;
     void* get_cost_info = nullptr;
     void* character_id_info = nullptr;
+    void* fetch_host_info = nullptr;
+    void* is_token_info = nullptr;
     void* level_id_info = nullptr;
     void* damage_type_info = nullptr;
     void* instance_uid_info = nullptr;
@@ -393,6 +398,14 @@ bool NativeCapture::initialize() {
                            "get_characterId");
         il2cpp.bind_getter(il2cpp.instance_uid, il2cpp.instance_uid_info, character_class_,
                            "get_instanceUid");
+        il2cpp.bind_getter(il2cpp.fetch_host, il2cpp.fetch_host_info, character_class_, "FetchHost");
+        il2cpp.bind_getter(il2cpp.is_token, il2cpp.is_token_info, character_class_, "get_isToken");
+        if (il2cpp.type(il2cpp.method_return(il2cpp.fetch_host_info)) != "Torappu.Battle.Entity" ||
+            il2cpp.type(il2cpp.method_return(il2cpp.is_token_info)) != "System.Boolean" ||
+            il2cpp.method_flags(il2cpp.fetch_host_info, &implementation_flags) & kMethodAttributeStatic ||
+            il2cpp.method_flags(il2cpp.is_token_info, &implementation_flags) & kMethodAttributeStatic) {
+            throw std::runtime_error("Unsupported operator host metadata");
+        }
         il2cpp.bind_getter(il2cpp.level_id, il2cpp.level_id_info, battle_controller_class_,
                            "get_levelId");
         il2cpp.bind_getter(il2cpp.fixed_play_time, il2cpp.fixed_play_time_info,
@@ -666,22 +679,32 @@ void NativeCapture::record_damage(void* logger, void* modifier, bool elemental) 
     event.damage_type = healing ? ARK_DAMAGE_HEAL : il2cpp.damage_type(modifier, il2cpp.damage_type_info);
     if (!std::isfinite(event.calculated_damage) || !std::isfinite(event.actual_damage)) return;
     void* source = il2cpp.source(modifier, il2cpp.source_info);
-    if (source && il2cpp.assignable(character_class_, il2cpp.object_class(source))) {
-        copy_id(event.actor_id, sizeof(event.actor_id),
-                il2cpp.string(il2cpp.character_id(source, il2cpp.character_id_info)));
-        event.actor_instance = static_cast<std::uint32_t>(il2cpp.instance_uid(source, il2cpp.instance_uid_info));
-        if (event.actor_id[0]) history_.publish(event);
-    }
+    if (attribute_operator(source, event)) history_.publish(event);
     if (!elemental && damage && !healing && il2cpp.target) {
         void* target = il2cpp.target(modifier, il2cpp.target_info);
-        if (target && il2cpp.assignable(character_class_, il2cpp.object_class(target))) {
+        if (attribute_operator(target, event)) {
             event.kind = ARK_TAKEN;
-            copy_id(event.actor_id, sizeof(event.actor_id),
-                    il2cpp.string(il2cpp.character_id(target, il2cpp.character_id_info)));
-            event.actor_instance = static_cast<std::uint32_t>(il2cpp.instance_uid(target, il2cpp.instance_uid_info));
-            if (event.actor_id[0]) history_.publish(event);
+            history_.publish(event);
         }
     }
+}
+
+bool NativeCapture::attribute_operator(void* object, ArkEventV1& event) {
+    const auto& b = *bindings_;
+    OperatorIdentity identity;
+    const bool found = resolve_operator(object, identity, [&](void* candidate, OperatorIdentity& value) {
+        if (!b.assignable(character_class_, b.object_class(candidate))) return false;
+        value.id = b.string(b.character_id(candidate, b.character_id_info));
+        value.instance = b.instance_uid(candidate, b.instance_uid_info);
+        value.token = b.is_token && b.is_token(candidate, b.is_token_info);
+        return !value.id.empty();
+    }, [&](void* candidate) -> void* {
+        return b.fetch_host ? b.fetch_host(candidate, b.fetch_host_info) : nullptr;
+    });
+    if (!found) return false;
+    copy_id(event.actor_id, sizeof(event.actor_id), identity.id);
+    event.actor_instance = identity.instance;
+    return true;
 }
 
 void NativeCapture::record_cost(void* controller, void* source, int amount) {
@@ -693,10 +716,7 @@ void NativeCapture::record_cost(void* controller, void* source, int amount) {
     event.kind = ARK_COST;
     event.game_time = game_clock();
     event.actual_damage = event.calculated_damage = amount;
-    event.actor_instance = static_cast<std::uint32_t>(bindings_->instance_uid(source, bindings_->instance_uid_info));
-    copy_id(event.actor_id, sizeof(event.actor_id),
-            bindings_->string(bindings_->character_id(source, bindings_->character_id_info)));
-    if (event.actor_id[0]) history_.publish(event);
+    if (attribute_operator(source, event)) history_.publish(event);
 }
 
 bool NativeCapture::on_modify_cost(void* self, int value, void* source, int side,

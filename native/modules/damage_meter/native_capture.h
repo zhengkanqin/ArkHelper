@@ -44,6 +44,7 @@ private:
     void record_cost(void* controller, void* source, int amount);
     double game_clock();
     void publish_frame();
+    bool attribute_operator(void* object, ArkEventV1& event);
 
     static void on_log_modifier(void* self, void* modifier, void* method);
     static void on_log_ep_modifier(void* self, void* modifier, void* method);

@@ -37,6 +37,9 @@ void configuration(const std::filesystem::path& directory) {
           (1u<<arkhelp::ipc::kStatCost)),"old slot mask lost its original metric identity");
     check(config.damage_sort_metric==arkhelp::ipc::kStatHeal+1,"sort selection changed its metric");
     check(!config.damage_merged && config.damage_panel_width==0,"legacy cramped layout survived migration");
+    check(config.damage_compact,"old configuration must use compact table spacing by default");
+    config.damage_compact=false;
+    arkhelp::feature_appearance(config,arkhelp::ipc::kFeatureDamageNumbers).click_through=true;
     const auto expected_mask=config.damage_metric_mask;
     config.range_only_paused=true;
     config.hp_only_paused=false;
@@ -47,6 +50,7 @@ void configuration(const std::filesystem::path& directory) {
     for (std::size_t index=0;index<config.appearances.size();++index)
         config.appearances[index]={static_cast<int>(25+index*8),static_cast<int>(12+index*2),
                                    static_cast<std::int32_t>(index*0x20304)};
+    arkhelp::feature_appearance(config,arkhelp::ipc::kFeatureDamageNumbers).click_through=true;
     config.damage_order=L"cost,heal,total,physical,arts,true,element,buildup,taken,shield,dps,share";
     config.prts_fields=arkhelp::kWikiName|arkhelp::kWikiPrtsStats;
     config.prts_panel_x=430;config.prts_panel_y=250;config.prts_panel_width=510;config.prts_panel_height=460;
@@ -71,6 +75,9 @@ void configuration(const std::filesystem::path& directory) {
     check(arkhelp::config_save(path.wstring(),config),"configuration save failed");
     arkhelp::Config restored;
     check(arkhelp::config_load(path.wstring(),restored),"saved configuration did not reload");
+    check(!restored.damage_compact && arkhelp::feature_appearance(restored,arkhelp::ipc::kFeatureDamageNumbers).click_through &&
+        !arkhelp::feature_appearance(restored,arkhelp::ipc::kFeatureWiki).click_through,
+        "compact spacing and per-panel click-through must persist independently");
     check(restored.damage_metric_mask==expected_mask && restored.damage_sort_metric==config.damage_sort_metric,
           "reordering columns changed visibility or sorting");
     check(restored.damage_order==config.damage_order,"column order was not persisted");

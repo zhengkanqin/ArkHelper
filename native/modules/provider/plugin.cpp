@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <exception>
 #include <memory>
+#include <iterator>
 #include <string>
 
 #include "app/app.h"
@@ -32,7 +33,7 @@ void log(std::uint32_t level, const std::string& message) {
 bool host_is_compatible(const ArkPluginApiV1* host) {
     return host && host->size >= sizeof(ArkPluginApiV1) && host->abi_version == ARK_ABI_VERSION &&
            host->imgui_version == ARK_MODULE_COMPAT_VERSION && host->log && host->on_frame &&
-           host->remove_callback;
+           host->remove_callback && host->require_service;
 }
 
 void on_frame(void* user, const ArkFrameV1* frame) {
@@ -58,9 +59,10 @@ void release_callbacks() {
 } // namespace
 
 extern "C" const ArkPluginInfoV1* arkhelp_provider_query() {
+    static const char* const dependencies[] = {"damage_meter.dll"};
     static const ArkPluginInfoV1 info = {
-        sizeof(ArkPluginInfoV1), ARK_ABI_VERSION, ARK_MODULE_COMPAT_VERSION, "ArkHelper Battle Provider", "1.0.0",
-        "ArkHelper",               ARK_PLUGIN_DEFAULT, nullptr,          0,
+        sizeof(ArkPluginInfoV1), ARK_ABI_VERSION, ARK_MODULE_COMPAT_VERSION, "ArkHelper Battle Provider", "1.1.0",
+        "ArkHelper", ARK_PLUGIN_DEFAULT, dependencies, std::size(dependencies),
     };
     return &info;
 }

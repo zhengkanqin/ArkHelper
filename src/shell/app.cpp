@@ -494,11 +494,12 @@ int App::initialize(HINSTANCE instance)
         config_.menu_height=std::clamp(height,400,900);save_config();
     };
     menu_callbacks.on_appearance = [this](uint32_t bit, const FeatureAppearance& appearance) {
+        const bool font_changed = feature_appearance(config_, bit).font_size != appearance.font_size;
         feature_appearance(config_, bit) = appearance;
         apply_appearances();
-        if (bit == ipc::kFeatureDamageNumbers) damage_width_revision_ = {};
-        if (bit == ipc::kFeatureWiki) enemy_views_[0].width_dirty = true;
-        if (bit == ipc::kFeatureEnemyPrts) enemy_views_[1].width_dirty = true;
+        if (font_changed && bit == ipc::kFeatureDamageNumbers) damage_width_revision_ = {};
+        if (font_changed && bit == ipc::kFeatureWiki) enemy_views_[0].width_dirty = true;
+        if (font_changed && bit == ipc::kFeatureEnemyPrts) enemy_views_[1].width_dirty = true;
         save_config();
     };
     menu_callbacks.on_wiki_fields = [this](uint32_t bit, uint32_t mask) {
@@ -572,15 +573,18 @@ int App::initialize(HINSTANCE instance)
         DamageConfig config;
         config.metric_mask = config_.damage_metric_mask;
         config.merged = config_.damage_merged;
+        config.compact = config_.damage_compact;
         config.sort_metric = config_.damage_sort_metric;
         config.order = config_.damage_order;
         return config;
     };
     menu_callbacks.on_damage_config = [this](const DamageConfig& config) {
         if (config_.damage_metric_mask != config.metric_mask || config_.damage_merged != config.merged ||
-            config_.damage_order != config.order) damage_width_revision_ = {};
+            config_.damage_order != config.order || config_.damage_compact != config.compact) damage_width_revision_ = {};
         config_.damage_metric_mask = config.metric_mask;
         config_.damage_merged = config.merged;
+        config_.damage_compact = config.compact;
+        panels::set_statistics_compact(config.compact);
         config_.damage_sort_metric = config.sort_metric;
         config_.damage_order = config.order;
     overlay::set_damage_config(config_.damage_metric_mask, config_.damage_merged,
@@ -1068,7 +1072,7 @@ void App::poll()
         });
         const auto damage_width_key = std::hash<std::wstring>{}(config_.damage_order) ^
             (static_cast<std::uint64_t>(config_.damage_metric_mask) << 32) ^
-            (config_.damage_merged ? 1ull << 56 : 0);
+            (config_.damage_merged ? 1ull << 56 : 0) ^ (config_.damage_compact ? 1ull << 57 : 0);
         panels::Row header;
         header.header = true;
         header.cells.push_back(L"干员");
@@ -1769,6 +1773,7 @@ void App::on_ui_scale_changed(int percent)
 
 void App::apply_appearances()
 {
+    panels::set_statistics_compact(config_.damage_compact);
     for (const auto bit : kAppearanceFeatures)
         overlay::set_appearance(bit, feature_appearance(config_, bit));
     panels::set_appearance(panels::kDamagePanelId, feature_appearance(config_, ipc::kFeatureDamageNumbers));
