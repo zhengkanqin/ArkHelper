@@ -61,7 +61,7 @@ void release_callbacks() {
 extern "C" const ArkPluginInfoV1* arkhelp_provider_query() {
     static const char* const dependencies[] = {"damage_meter.dll"};
     static const ArkPluginInfoV1 info = {
-        sizeof(ArkPluginInfoV1), ARK_ABI_VERSION, ARK_MODULE_COMPAT_VERSION, "ArkHelper Battle Provider", "1.2.1",
+        sizeof(ArkPluginInfoV1), ARK_ABI_VERSION, ARK_MODULE_COMPAT_VERSION, "ArkHelper Battle Provider", "1.3.0",
         "ArkHelper", ARK_PLUGIN_DEFAULT, dependencies, std::size(dependencies),
     };
     return &info;

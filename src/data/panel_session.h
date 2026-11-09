@@ -139,4 +139,15 @@ struct PanelWidthRevision {
     std::uint64_t value = 0;
 };
 
+struct PanelAutoWidth {
+    void restore(int width_px) { pending = width_px <= 0; }
+    void request() { pending = true; }
+    bool take(bool ready) {
+        if (!ready || !pending) return false;
+        pending = false;
+        return true;
+    }
+    bool pending = true;
+};
+
 } // namespace arkhelp

@@ -427,6 +427,7 @@ inline PlanWave read_plan_wave(il2cpp::Runtime& rt, void* wave, Stage& stage, st
             PlanAction parsed;
             const std::string type = enum_name(rt, member(rt, action, "actionType"));
             parsed.spawn = type == "SPAWN";
+            parsed.display_enemy_info = type == "DISPLAY_ENEMY_INFO";
             parsed.known = !type.empty();
             parsed.enabled = optional_bool(rt, action, "isValid", true, parsed.known);
             parsed.scheduled = optional_bool(rt, action, "managedByScheduler", true, parsed.known);

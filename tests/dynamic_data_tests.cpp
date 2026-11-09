@@ -138,6 +138,34 @@ int main() {
     build_spawn_prefix(plan, wave, false, false);
     check(plan.spawns.empty(), "unbounded timeline is rejected");
     normal.interval = 1;
+    PlanAction info = normal;
+    info.spawn = false; info.display_enemy_info = true; info.count = 1; info.key.clear();
+    normal.count = 3;
+    wave.fragments = {PlanFragment{true, 0, {info, normal}}, PlanFragment{true, 8, {normal}}};
+    build_spawn_prefix(plan, wave, false, false);
+    check(plan.spawn_plan_available && !plan.spawn_plan_conditional && plan.spawns.size() == 6 &&
+          plan.spawns.front().enemy_key == normal.key,
+          "initial enemy-info notification cannot discard normal spawns or become a fake enemy");
+    info.delay = 10;
+    wave.fragments = {PlanFragment{true, 0, {info, normal}}, PlanFragment{true, 8, {normal}}};
+    build_spawn_prefix(plan, wave, false, false);
+    check(plan.spawns.size() == 6 && std::abs(plan.spawns[3].time - (18 + 4.0/30.0)) < 1e-8,
+          "a delayed enemy-info action contributes to the fragment completion time");
+    info.display_enemy_info = false;
+    wave.fragments = {PlanFragment{true, 0, {info, normal}}};
+    build_spawn_prefix(plan, wave, false, false);
+    check(plan.spawns.empty() && plan.spawn_plan_conditional,
+          "unsupported non-spawn actions still cannot produce guessed countdowns");
+    info.display_enemy_info = true; info.conditional = true;
+    wave.fragments = {PlanFragment{true, 0, {info, normal}}};
+    build_spawn_prefix(plan, wave, false, false);
+    check(plan.spawns.empty() && plan.spawn_plan_conditional,
+          "conditional enemy-info actions remain outside a deterministic prefix");
+    info.conditional = false; info.delay = INFINITY;
+    wave.fragments = {PlanFragment{true, 0, {info, normal}}};
+    build_spawn_prefix(plan, wave, false, false);
+    check(plan.spawns.empty() && plan.spawn_plan_conditional,
+          "invalid enemy-info timing cannot leak an unbounded countdown");
     normal.count = 4;
     normal.key = "future_enemy";
     PlanWave later;

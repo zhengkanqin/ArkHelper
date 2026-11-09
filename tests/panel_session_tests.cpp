@@ -80,6 +80,26 @@ void width_revision_is_one_shot() {
     check(revision.changed(0) && !revision.changed(0),"closing PRTS did not fit exactly once");
     revision={};check(revision.changed(0),"explicit feature enable could not request a new fit");
 }
+void reference_width_persistence() {
+    arkhelp::PanelAutoWidth width;
+    check(!width.take(false), "unloaded PRTS consumed its initial fit");
+    check(width.take(true) && !width.take(true), "initial PRTS width did not fit once");
+    width.restore(510);
+    for (int toggle = 0; toggle < 5; ++toggle) {
+        check(!width.take(false) && !width.take(true), "reopening PRTS replaced its saved width");
+    }
+    arkhelp::PanelAutoWidth restarted;
+    restarted.restore(510);
+    check(!restarted.take(true), "restart replaced a persisted PRTS width");
+    restarted.request();
+    check(!restarted.take(false) && restarted.take(true) && !restarted.take(true),
+          "explicit layout change did not wait for content and fit once");
+    restarted.request();
+    restarted.restore(620);
+    check(!restarted.take(true), "late content replaced a resize performed while loading");
+    restarted.restore(0);
+    check(restarted.take(true), "reset did not restore automatic fitting");
+}
 void last_valid_enemy_values() {
     PanelSession state;
     auto live=sample(1000);
@@ -116,6 +136,7 @@ int main() {
         first_launch_and_retention();std::puts("PASS startup hiding, final report retention, dismissal and next battle");
         disconnection_is_not_completion();std::puts("PASS connection interruption, stale data and recovery");
         width_revision_is_one_shot();std::puts("PASS one-shot fitting preserves manual width between content changes");
+        reference_width_persistence();std::puts("PASS PRTS width across toggle, restart, delayed content and layout changes");
         last_valid_enemy_values();std::puts("PASS sparse enemy attributes, zero HP, teardown reference fallback and battle/instance isolation");
     } catch(const std::exception& error) { std::fprintf(stderr,"FAIL %s\n",error.what());return 1; }
     return 0;

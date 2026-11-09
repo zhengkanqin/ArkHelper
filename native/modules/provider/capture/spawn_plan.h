@@ -17,6 +17,7 @@ struct PlanAction {
     int route = -1;
     double delay = 0;
     double interval = 0;
+    bool display_enemy_info = false;
 };
 struct PlanFragment {
     bool known = true;
@@ -76,15 +77,16 @@ inline void build_spawn_prefix(Stage& stage, const PlanWave& first, bool later_w
         for (const PlanAction& action : fragment.actions) {
             if (!supported || !action.known || action.conditional) { supported = false; break; }
             if (!action.enabled || !action.scheduled) continue;
-            if (!action.spawn || action.key.empty() || action.count <= 0 || action.count > 4096 ||
-                stage.spawns.size() + action.count > 4096 || !std::isfinite(action.delay) ||
+            if ((!action.spawn && !action.display_enemy_info) ||
+                (action.spawn && (action.key.empty() || stage.spawns.size() + action.count > 4096)) ||
+                action.count <= 0 || action.count > 4096 || !std::isfinite(action.delay) ||
                 !std::isfinite(action.interval) || action.delay < 0 || action.interval < 0) {
                 supported = false; break;
             }
             const double at = start + action.delay;
             const double last = at + action.interval * (action.count - 1);
             if (!std::isfinite(last) || last > 24.0 * 3600) { supported = false; break; }
-            for (int i = 0; i < action.count; ++i) {
+            for (int i = 0; action.spawn && i < action.count; ++i) {
                 Spawn spawn;
                 spawn.time = at + i * action.interval;
                 spawn.frame = static_cast<int>(spawn.time * 30 + .5);

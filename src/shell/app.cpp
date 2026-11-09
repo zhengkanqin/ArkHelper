@@ -273,8 +273,7 @@ private:
         std::string selected_key;
         std::vector<std::string> keys;
         std::vector<std::wstring> names;
-        PanelWidthRevision width_revision;
-        bool width_dirty = true;
+        PanelAutoWidth auto_width;
     };
     std::array<EnemyView, 2> enemy_views_;
     ULONGLONG wiki_request_ms_ = 0;
@@ -498,14 +497,14 @@ int App::initialize(HINSTANCE instance)
         feature_appearance(config_, bit) = appearance;
         apply_appearances();
         if (font_changed && bit == ipc::kFeatureDamageNumbers) damage_width_revision_ = {};
-        if (font_changed && bit == ipc::kFeatureWiki) enemy_views_[0].width_dirty = true;
-        if (font_changed && bit == ipc::kFeatureEnemyPrts) enemy_views_[1].width_dirty = true;
+        if (font_changed && bit == ipc::kFeatureWiki) enemy_views_[0].auto_width.request();
+        if (font_changed && bit == ipc::kFeatureEnemyPrts) enemy_views_[1].auto_width.request();
         save_config();
     };
     menu_callbacks.on_wiki_fields = [this](uint32_t bit, uint32_t mask) {
         if (bit == ipc::kFeatureEnemyPrts) config_.prts_fields = mask & kWikiAllFields;
         else config_.wiki_fields = mask & kWikiAllFields;
-        enemy_views_[bit == ipc::kFeatureEnemyPrts ? 1 : 0].width_dirty = true;
+        enemy_views_[bit == ipc::kFeatureEnemyPrts ? 1 : 0].auto_width.request();
         save_config();
     };
     menu_callbacks.on_feature_menu = [this](uint32_t mask, const FeatureOrder& order) {
@@ -686,7 +685,6 @@ int App::initialize(HINSTANCE instance)
                 wiki_result_ = {};
                 wiki_request_ms_ = GetTickCount64();
                 prts_.request(wiki_name_, true);
-                view.width_dirty = true;
             }
         }
     };
@@ -705,9 +703,11 @@ int App::initialize(HINSTANCE instance)
         {
             config_.wiki_panel_width = width_px;
             config_.wiki_panel_height = height_px;
+            enemy_views_[0].auto_width.restore(width_px);
         }
         else if (std::wcscmp(id, panels::kPrtsPanelId) == 0) {
             config_.prts_panel_width = width_px; config_.prts_panel_height = height_px;
+            enemy_views_[1].auto_width.restore(width_px);
         }
         save_config();
         log_info("panel %s resized to %dx%d px", wide_to_utf8(id).c_str(), width_px, height_px);
@@ -748,6 +748,8 @@ int App::initialize(HINSTANCE instance)
     panels::restore_width(panels::kSpawnPanelId, config_.spawn_panel_width);
     panels::restore_width(panels::kWikiPanelId, config_.wiki_panel_width);
     panels::restore_width(panels::kPrtsPanelId, config_.prts_panel_width);
+    enemy_views_[0].auto_width.restore(config_.wiki_panel_width);
+    enemy_views_[1].auto_width.restore(config_.prts_panel_width);
     panels::restore_dock_state(config_.dock_state);
     if (std::getenv("ARKHELP_PANEL_DEMO") != nullptr)
     {
@@ -1337,8 +1339,6 @@ void App::update_enemy_panels(const ipc::BattleSnapshot& snapshot, bool availabl
             panels::set_avatars(panel_id, avatars, 28);
             const ipc::EnemyEntry& selected = roster[static_cast<std::size_t>(view.selected)];
             view.selected_key = selected.enemy_key;
-            const bool prts_expanded = reference_enabled && wiki_result_.ok;
-            reference_ready = prts_expanded;
             auto stat_row = [&wiki_rows, field_mask](const wchar_t* label, const std::wstring& value) {
                 const auto field = wiki_field_bit(label);
                 if (field && !(field_mask & field)) return;
@@ -1389,7 +1389,6 @@ void App::update_enemy_panels(const ipc::BattleSnapshot& snapshot, bool availabl
                 {
                     wiki_name_ = selected_name;
                     wiki_result_ = net::PrtsResult{};
-                    view.width_dirty = true;
                     wiki_request_ms_ = now;
                     prts_.request(selected_name);
                 }
@@ -1399,16 +1398,14 @@ void App::update_enemy_panels(const ipc::BattleSnapshot& snapshot, bool availabl
                 {
                     if (ready_name != wiki_name_) continue;
                     wiki_result_ = ready;
-                    view.width_dirty = true;
-                    reference_ready = reference_enabled && wiki_result_.ok;
                 }
                 if (!wiki_result_.ok && wiki_result_.error.empty() && wiki_request_ms_ &&
                     now - wiki_request_ms_ >= 15000) {
                     wiki_result_.error = L"请求超时，点击重试";
-                    view.width_dirty = true;
                 }
                 if (wiki_result_.ok)
                 {
+                    reference_ready = true;
                     if(wiki_result_.stale) {
                         panels::Row cached;
                         cached.left=L"PRTS 缓存资料（联网更新暂不可用）";
@@ -1495,14 +1492,10 @@ void App::update_enemy_panels(const ipc::BattleSnapshot& snapshot, bool availabl
             wiki_rows.push_back(panels::Row{panel_session_.retained() ? L"本场没有敌人目录" : L"等待当前关卡敌人目录…", L"", 0});
         }
         view.enemy_rows = enemy_rows;
-        // Fit once when PRTS opens, completes or changes content. Ordinary polls preserve manual width.
-        const std::uint64_t wiki_width_key = (reference_enabled ? 1u : 0u) | (reference_ready ? 2u : 0u);
-        const bool wiki_content_changed = view.width_revision.changed(wiki_width_key);
-        if (available && (status_.feature_mask & bit) != 0 &&
-            (wiki_content_changed || view.width_dirty)) {
-        if (reference_ready) panels::fit_reference_width(panel_id, wiki_rows);
-        else panels::fit_width(panel_id, 300);
-        view.width_dirty = false;
+        if (view.auto_width.take(available && (status_.feature_mask & bit) != 0 &&
+                                 (!reference || reference_ready))) {
+            if (reference) panels::fit_reference_width(panel_id, wiki_rows);
+            else panels::fit_width(panel_id, 300);
         }
         panels::update(panel_id, reference ? L"敌方 PRTS" : L"敌方数据", wiki_rows,
                        available && panel_session_.visible(bit) &&
@@ -1729,8 +1722,6 @@ void App::on_feature_toggle(uint32_t bit, bool enabled)
     config_.features = mask;
     status_.feature_mask = mask;
     if (enabled && bit == ipc::kFeatureDamageNumbers) damage_width_revision_ = {};
-    if (enabled && bit == ipc::kFeatureWiki) enemy_views_[0].width_dirty = true;
-    if (enabled && bit == ipc::kFeatureEnemyPrts) enemy_views_[1].width_dirty = true;
     if (commands_.ready())
     {
         commands_.set_feature_mask(mask);
@@ -1819,6 +1810,8 @@ void App::on_reset_defaults()
     panels::restore_width(panels::kSpawnPanelId, 0);
     panels::restore_width(panels::kWikiPanelId, 0);
     panels::restore_width(panels::kPrtsPanelId, 0);
+    enemy_views_[0].auto_width = {};
+    enemy_views_[1].auto_width = {};
     panels::refresh_theme(config_.ui_scale);
     apply_appearances();
     save_config();
