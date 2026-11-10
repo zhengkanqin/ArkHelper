@@ -105,6 +105,8 @@ struct Spawn {
     int count = 1;
     int route_index = -1;
     bool random = false; // Conditional or random spawn; no deterministic countdown.
+    bool pending = false; // Later fragment/wave; its start condition has not been reached.
+    std::uint32_t phase = 0;
 };
 
 struct StageOptions {

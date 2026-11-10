@@ -29,6 +29,20 @@ int main() {
     using namespace arkhelp;
     try {
         gfx::Surface surface; surface.resize(800,600);
+        ipc::BattleSnapshot spawn_snapshot{};spawn_snapshot.spawn_count=3;
+        for(int i=0;i<3;++i) {
+            auto& spawn=spawn_snapshot.spawns[i];spawn.flags=ipc::kSpawnScreenValid;
+            spawn.screen={100+i*200,100};spawn.count=1;
+            std::snprintf(spawn.enemy_name,sizeof(spawn.enemy_name),"enemy%d",i);
+            spawn.remaining_seconds=12;
+            if(i>0) {spawn.flags|=ipc::kSpawnPending;spawn.remaining_seconds=-1;}
+        }
+        features::draw_spawn_timers(surface,spawn_snapshot,1,false,false,14);
+        check(std::count_if(texts.begin(),texts.end(),[](const auto& t){return t.value==L"待触发";})==2,
+            "two later entrances were hidden instead of showing pending spawn labels");
+        check(std::any_of(texts.begin(),texts.end(),[](const auto& t){return t.value==L"00:12";}),
+            "active entrance lost its numeric countdown");
+        texts.clear();
         ipc::BattleSnapshot snapshot{}; snapshot.in_battle=1; snapshot.unit_count=1;
         snapshot.units[0].flags=ipc::kUnitValid|ipc::kUnitHpValid;
         snapshot.units[0].x=snapshot.units[0].y=200;

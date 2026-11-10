@@ -201,6 +201,7 @@ void draw_spawn_timers(gfx::Surface& surface, const ipc::BattleSnapshot& snapsho
     {
         ipc::Vec2 point;
         float remaining = 0.0f;
+        bool pending = false;
         std::vector<BatchItem> items;
     };
     struct Candidate
@@ -214,11 +215,12 @@ void draw_spawn_timers(gfx::Surface& surface, const ipc::BattleSnapshot& snapsho
     for (int index = 0; index < count; ++index) {
         const ipc::SpawnEntry& spawn = snapshot.spawns[index];
         const float remaining = spawn.remaining_seconds;
-        if (!(remaining >= 0.0f)) {
+        const bool pending = (spawn.flags & ipc::kSpawnPending) != 0;
+        if (!pending && !(remaining >= 0.0f)) {
             continue;
         }
         if ((spawn.flags & ipc::kSpawnScreenValid) == 0) {
-            fallback.emplace_back(format_clock(remaining), spawn_label(snapshot, index));
+            fallback.emplace_back(pending ? L"待触发" : format_clock(remaining), spawn_label(snapshot, index));
             continue;
         }
         std::size_t gate_index = gates.size();
@@ -230,7 +232,7 @@ void draw_spawn_timers(gfx::Surface& surface, const ipc::BattleSnapshot& snapsho
             }
         }
         if (gate_index == gates.size()) {
-            gates.push_back(GateBatch{spawn.screen, 0.0f, {}});
+            gates.push_back(GateBatch{spawn.screen, 0.0f, pending, {}});
             gate_candidates.emplace_back();
         }
         gate_candidates[gate_index].push_back(Candidate{remaining, index});
@@ -281,7 +283,7 @@ void draw_spawn_timers(gfx::Surface& surface, const ipc::BattleSnapshot& snapsho
             line += std::to_wstring(item.amount);
             lines.push_back(line);
         }
-        lines.push_back(format_clock(gate.remaining));
+        lines.push_back(gate.pending ? L"待触发" : format_clock(gate.remaining));
         float text_size = size;
         for (const std::wstring& line : lines) {
             while (font_size == 0 && text_size > 11.0f * scale && estimate_text_width(line, text_size) > max_width) {
@@ -370,7 +372,11 @@ void draw_spawn_card(gfx::Surface& surface, const ipc::BattleSnapshot& snapshot,
                       gfx::TextAlign::kLeading, false);
     y += 18.0f * scale;
 
-    if (spawn.remaining_seconds >= 0.0f) {
+    if (spawn.flags & ipc::kSpawnPending) {
+        surface.draw_text(L"待触发", left + padding, y, 12.5f * scale, kTextColor,
+                          gfx::TextAlign::kLeading, false);
+        y += 18.0f * scale;
+    } else if (spawn.remaining_seconds >= 0.0f) {
         std::wstring remaining = L"剩余 ";
         remaining += std::to_wstring(static_cast<int>(integer_seconds(spawn.remaining_seconds)));
         remaining += L" 秒";

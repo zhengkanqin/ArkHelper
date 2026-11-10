@@ -135,14 +135,17 @@ public:
         for(std::uint32_t i=0;i<count && result.count<result.ids.size();++i) {
             const auto& spawn=snapshot.spawns[i];
             if(!(spawn.flags&ipc::kSpawnScreenValid) || (spawn.flags&ipc::kSpawnRandom) ||
-                !std::isfinite(spawn.remaining_seconds) || spawn.remaining_seconds<0) continue;
+                !std::isfinite(spawn.remaining_seconds) ||
+                (!(spawn.flags&ipc::kSpawnPending) && spawn.remaining_seconds<0)) continue;
             const float dx=pointer.x-spawn.screen.x,dy=pointer.y-spawn.screen.y;
             if(dx*dx+dy*dy>radius_squared)continue;
             auto first=spawn.planned_frame;
             for(std::uint32_t j=0;j<count;++j) {
                 const auto& other=snapshot.spawns[j];
                 if((other.flags&ipc::kSpawnScreenValid) && !(other.flags&ipc::kSpawnRandom) &&
-                    std::isfinite(other.remaining_seconds) && other.remaining_seconds>=0 &&
+                    std::isfinite(other.remaining_seconds) &&
+                    ((other.flags&ipc::kSpawnPending) || other.remaining_seconds>=0) &&
+                    (other.flags&ipc::kSpawnPending)==(spawn.flags&ipc::kSpawnPending) &&
                     std::abs(other.screen.x-spawn.screen.x)<=2 && std::abs(other.screen.y-spawn.screen.y)<=2)
                     first=std::min(first,other.planned_frame);
             }

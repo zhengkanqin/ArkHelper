@@ -1,8 +1,8 @@
 101 ICON "arkhelp.ico"
 
 1 VERSIONINFO
-FILEVERSION 1,4,1,0
-PRODUCTVERSION 1,4,1,0
+FILEVERSION 1,4,2,0
+PRODUCTVERSION 1,4,2,0
 FILEFLAGSMASK 0x3fL
 FILEFLAGS 0x0L
 FILEOS 0x40004L
@@ -14,10 +14,10 @@ BEGIN
         BLOCK "080404B0"
         BEGIN
             VALUE "FileDescription", "ArkHelper\0"
-            VALUE "FileVersion", "1.4.1\0"
+            VALUE "FileVersion", "1.4.2\0"
             VALUE "InternalName", "ArkHelper\0"
             VALUE "ProductName", "ArkHelper\0"
-            VALUE "ProductVersion", "1.4.1\0"
+            VALUE "ProductVersion", "1.4.2\0"
         END
     END
     BLOCK "VarFileInfo"

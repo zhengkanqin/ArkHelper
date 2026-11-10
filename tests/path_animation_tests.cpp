@@ -174,6 +174,16 @@ int main() {
         snapshot.spawns[0].flags|=ipc::kSpawnRandom;animation.reset();options.path_on_click=false;step(1000,hover_pointer);
         check(animation.requests().size()==1 && animation.requests()[0]==ipc::spawn_path_id(1),
             "red gate accepted an undetermined random spawn or a later batch");
+        for(unsigned i=0;i<4;++i) {
+            snapshot.spawns[i].flags=ipc::kSpawnScreenValid|ipc::kSpawnPending;
+            snapshot.spawns[i].remaining_seconds=-1;
+        }
+        animation.reset();step(1000,hover_pointer);
+        check(animation.requests().size()==2 && animation.playbacks()[0].ready && animation.playbacks()[1].ready,
+            "pending entrance previews lost hover path drawing");
+        animation.reset();options.path_on_click=true;hover_pointer.clicked=true;step(1000,hover_pointer);hover_pointer.clicked=false;
+        check(animation.playbacks()[0].ready && animation.playbacks()[1].ready,
+            "pending entrance previews lost click path drawing");
         check(ipc::spawn_path_id(0)!=42 && ipc::is_spawn_path(ipc::spawn_path_id(65535)) &&
             !ipc::spawn_path_id(65536) && !ipc::is_spawn_path(ipc::kSpawnPathTag) && !ipc::is_spawn_path(42),
             "route target namespace or limits overlap ordinary instance IDs");

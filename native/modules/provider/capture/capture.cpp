@@ -1715,12 +1715,16 @@ void publish(DetourState& state, void* controller) {
         g_spawns_enabled.load(std::memory_order_relaxed) &&
         (!g_spawn_attempt_ms || sample.updated_ms - g_spawn_attempt_ms >= 250)) {
         g_spawn_attempt_ms = sample.updated_ms;
-        const auto& schedule = g_spawn_reader.read(*g_runtime, controller, sample.serial, sample.updated_ms);
+        const auto& schedule = g_spawn_reader.read(*g_runtime, controller, sample.serial, sample.updated_ms, sample.frame);
         std::unique_lock lock(g_spawn_mutex, std::try_to_lock);
         if (lock) {
             if (g_spawns.serial != schedule.serial || g_spawns.revision != schedule.revision)
                 g_spawns = schedule;
-            else g_spawns.sampled_ms = schedule.sampled_ms;
+            else {
+                g_spawns.sampled_ms = schedule.sampled_ms;
+                g_spawns.clock_seconds = schedule.clock_seconds;
+                g_spawns.frame = schedule.frame;
+            }
         }
     }
     update_units(state, controller);
@@ -2355,7 +2359,7 @@ bool spawn_snapshot(std::vector<Spawn>& out, std::uint32_t battle_serial) {
     if (!g_spawns_enabled.load(std::memory_order_relaxed) || !g_spawns.available ||
         g_spawns.serial != battle_serial || !g_spawns.sampled_ms || g_spawns.sampled_ms > now ||
         now - g_spawns.sampled_ms > 1000) return false;
-    out = g_spawns.spawns;
+    out = live::spawn_frames(g_spawns);
     return true;
 }
 

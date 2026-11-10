@@ -1,4 +1,4 @@
-// ArkHelper IPC contract v10 (mapping names retain their original .v1 suffix).
+// ArkHelper IPC contract v11 (mapping names retain their original .v1 suffix).
 //
 // Two named shared-memory sections connect the in-game provider plugin (writer of the battle
 // snapshot, reader of commands) with the external ArkHelper.exe overlay (writer of commands, reader
@@ -22,7 +22,7 @@
 
 namespace arkhelp::ipc {
 
-inline constexpr std::uint32_t kVersion = 10;
+inline constexpr std::uint32_t kVersion = 11;
 inline constexpr std::uint32_t kBattleMagic = 0x42484841u;   // "AHHB"
 inline constexpr std::uint32_t kCommandMagic = 0x43484841u;  // "AHHC"
 
@@ -76,6 +76,7 @@ enum Feature : std::uint32_t {
 enum SpawnFlags : std::uint32_t {
     kSpawnRandom = 1u << 0,        // random spawn group; timing may differ from the plan
     kSpawnScreenValid = 1u << 1,   // `screen` holds a usable projection
+    kSpawnPending = 1u << 2,       // waiting for a later phase; no numeric countdown yet
 };
 
 enum EnemyFlags : std::uint32_t {
@@ -145,12 +146,12 @@ enum UnitFlags : std::uint32_t {
 };
 
 struct SpawnEntry {
-    std::uint32_t planned_frame = 0;   // plan frame at 30 fps, from the offline data pack
+    std::uint32_t planned_frame = 0;   // logic frame at 30 fps; phase identifier when kSpawnPending
     std::uint32_t count = 0;
     std::uint32_t route_index = 0;
     std::uint32_t flags = 0;           // SpawnFlags
     Vec2 screen;                        // projected spawn point when kSpawnScreenValid
-    float remaining_seconds = 0.f;      // planned time minus current battle time, clamped at 0
+    float remaining_seconds = 0.f;      // seconds until spawn; -1 when kSpawnPending
     char enemy_key[kIdCapacity] = {};
     char enemy_name[kNameCapacity] = {};
 };

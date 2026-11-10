@@ -12,6 +12,7 @@
 #include "statistics_reader.h"
 #include "enemy_snapshot.h"
 #include "operator_publication.h"
+#include "spawn_selection.h"
 
 #include <windows.h>
 #include <tlhelp32.h>
@@ -382,24 +383,22 @@ void fill_spawns(ipc::BattleSnapshot& snapshot, const Stage* stage, const captur
     std::uint32_t written = 0;
     std::vector<Spawn> scheduled;
     const bool live_schedule = capture::spawn_snapshot(scheduled, status.battle_serial);
-    for (const Spawn& spawn : live_schedule ? scheduled : stage->spawns) {
+    const auto selected = select_gate_spawns(*stage, live_schedule ? scheduled : stage->spawns,
+                                             status.frame, ipc::kMaxSpawns);
+    for (const Spawn& spawn : selected) {
         if (written >= ipc::kMaxSpawns) {
             break;
         }
-        if (spawn.frame < 0 || static_cast<std::uint32_t>(spawn.frame) < status.frame) {
-            continue;
-        }
         ipc::SpawnEntry& entry = snapshot.spawns[written];
-        entry.planned_frame = static_cast<std::uint32_t>(spawn.frame);
+        entry.planned_frame = spawn.pending ? spawn.phase : static_cast<std::uint32_t>(spawn.frame);
         entry.count = static_cast<std::uint32_t>(spawn.count > 0 ? spawn.count : 1);
         entry.route_index = spawn.route_index >= 0 ? static_cast<std::uint32_t>(spawn.route_index) : 0u;
         entry.flags = spawn.random ? ipc::kSpawnRandom : 0u;
+        if (spawn.pending) entry.flags |= ipc::kSpawnPending;
         entry.remaining_seconds =
             static_cast<float>((static_cast<double>(spawn.frame) - static_cast<double>(status.frame)) /
                                kFramesPerSecond);
-        if (entry.remaining_seconds < 0.0f) {
-            entry.remaining_seconds = 0.0f;
-        }
+        if (spawn.pending) entry.remaining_seconds = -1;
         copy_text(entry.enemy_key, sizeof(entry.enemy_key), spawn.enemy_key);
         if (const Enemy* enemy = find_enemy(*stage, spawn.enemy_key)) {
             copy_text(entry.enemy_name, sizeof(entry.enemy_name), enemy->name);
