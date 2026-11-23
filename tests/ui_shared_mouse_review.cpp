@@ -16,6 +16,12 @@ struct NativeInput {
 static NativeInput* native_input = nullptr;
 static bool elevated_native=false;
 
+static UINT inject_key(unsigned key,bool down) {
+    INPUT input{};input.type=INPUT_KEYBOARD;
+    input.ki.wVk=static_cast<WORD>(key);input.ki.dwFlags=down?0:KEYEVENTF_KEYUP;
+    return SendInput(1,&input,sizeof(input));
+}
+
 static UINT inject_mouse(POINT point,DWORD flag,DWORD data) {
     INPUT input{};input.type=INPUT_MOUSE;
     input.mi.dx=(point.x-GetSystemMetrics(SM_XVIRTUALSCREEN))*65535/(GetSystemMetrics(SM_CXVIRTUALSCREEN)-1);
@@ -30,7 +36,8 @@ static LRESULT CALLBACK native_proc(HWND hwnd, UINT message, WPARAM keys, LPARAM
     case WM_TIMER:
         if (native_input->request!=native_input->ack) {
             if(native_input->flags==0xFFFFFFFFu){DestroyWindow(hwnd);return 0;}
-            inject_mouse(native_input->point,native_input->flags,native_input->data);
+            if(native_input->flags==0xFFFFFFFEu)inject_key(native_input->data,native_input->point.x!=0);
+            else inject_mouse(native_input->point,native_input->flags,native_input->data);
             InterlockedExchange(&native_input->ack,native_input->request);
         }
         return 0;
@@ -67,6 +74,17 @@ static void mouse(POINT point, DWORD flag = MOUSEEVENTF_MOVE, DWORD data = 0, bo
         require(native_input->ack==request,"elevated fixture input was not generated");
     } else require(inject_mouse(point,flag,data)==1,"fixture mouse input unavailable");
     if (dispatch) pump();
+}
+
+static void key(unsigned code,bool down) {
+    if(elevated_native) {
+        native_input->point={down?1L:0L,0};native_input->flags=0xFFFFFFFEu;native_input->data=code;
+        const auto request=InterlockedIncrement(&native_input->request);
+        const auto deadline=GetTickCount64()+2000;
+        while(native_input->ack!=request && GetTickCount64()<deadline)Sleep(1);
+        require(native_input->ack==request,"elevated fixture keyboard input was not generated");
+    } else require(inject_key(code,down)==1,"fixture keyboard input unavailable");
+    pump();
 }
 
 int wmain(int argc, wchar_t** argv) {
@@ -184,6 +202,18 @@ int wmain(int argc, wchar_t** argv) {
         GetGUIThreadInfo(child.dwThreadId, &game_thread);
         require(panel->dragging && GetCapture() == nullptr && game_thread.hwndCapture == native_input->window,
             "shared panel drag stole native capture or did not begin");
+        path_observer.take();
+        key(VK_CONTROL,true);key('K',true);key('K',true);key('K',false);key(VK_CONTROL,false);
+        require(panel->dragging && panel->x==x && panel->y==y && panels::g_shared_mouse.left_down(),
+            "keyboard events changed shared drag coordinates or mouse held state");
+        ShortcutMatcher<1> shortcut_matcher;
+        const std::array<Shortcut,1> bindings{shortcut_parse(L"17+75")};
+        int shortcut_triggers=0;
+        for(const auto& event:path_observer.take())
+            if(event.message==WM_KEYDOWN || event.message==WM_SYSKEYDOWN || event.message==WM_KEYUP || event.message==WM_SYSKEYUP)
+                shortcut_matcher.input(static_cast<unsigned>(event.keys),event.message==WM_KEYDOWN || event.message==WM_SYSKEYDOWN,
+                    bindings,[&](std::size_t){++shortcut_triggers;});
+        require(shortcut_triggers==1,"shared keyboard chord was lost, duplicated or repeated while held");
         POINT moved{title.x + 95, title.y + 55}; mouse(moved);
         if (panel->x != x + 95 || panel->y != y + 55 || native_input->drag <= 0) {
             std::fprintf(stderr,"drag fixture: panel=(%d,%d) expected=(%d,%d) dragging=%d native_moves=%ld held=%d\n",
@@ -195,6 +225,9 @@ int wmain(int argc, wchar_t** argv) {
             "native drag did not move panel and deliver motion to other process");
         mouse(moved, MOUSEEVENTF_LEFTUP);
         require(!panel->dragging && native_input->down == 2 && native_input->up == 2, "shared drag did not release both endpoints");
+        key('A',true);
+        require(!panels::g_shared_mouse.left_down() && !panel->dragging,"keyboard VK code became a held mouse button");
+        key('A',false);
 
         const int width = panel->width_override_px;
         POINT edge = point_at(panel->width_grip); mouse(edge); mouse(edge, MOUSEEVENTF_LEFTDOWN);
@@ -255,7 +288,7 @@ int wmain(int argc, wchar_t** argv) {
         mouse(title, MOUSEEVENTF_LEFTUP);
         require(!panel->dragging && !panels::g_shared_mouse.running() && native_input->down == native_input->up,
             "hiding shared panel left stale input or suppressed native release");
-        std::puts("PASS shared mouse: separate-process native click/drag/capture/wheel plus panel toggle/drag/resize/settings, occlusion and midgesture disable/hide");
+        std::puts("PASS shared input: separate-process click/drag/capture/wheel, keyboard chord/repeat, panel toggle/drag/resize/settings, occlusion and midgesture disable/hide");
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL shared mouse: %s\n", error.what()); result = 1;
         auto* panel=panels::find(panels::kDamagePanelId);

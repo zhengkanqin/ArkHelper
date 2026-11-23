@@ -129,7 +129,7 @@ int operator_snapshot(OperatorSample* out, int max, std::uint64_t* sampled_ms = 
 using PathSample = ::arkhelp::ipc::PathEntry;
 void set_path_requests(bool enabled, std::uint32_t battle_serial,
                        const std::uint64_t* tracking_ids, int count);
-int path_snapshot(PathSample* out, int max);
+int path_snapshot(PathSample* out, int max,std::uint64_t* all_request=nullptr,std::uint32_t* batch=nullptr,bool* cycle_complete=nullptr);
 
 bool unit_api_available();
 int unit_snapshot(UnitSample* out, int max, std::uint64_t* sample_ms = nullptr,

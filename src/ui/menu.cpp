@@ -1,5 +1,6 @@
 #include "menu.h"
 #include "menu_viewport.h"
+#include "shortcut_label.h"
 #include "../data/battle_statistics.h"
 #include "../data/enemy_metrics.h"
 #include <cmath>
@@ -89,6 +90,8 @@ enum class HitTarget
     kLineStyleFirst = 430, kCacheOpen = 440, kCacheChange, kCacheDefault,
     kGamePath = 450, kCreateShortcut, kRepairEnvironment,
     kManageToggleFirst = 500, kManageUpFirst = 520, kManageDownFirst = 540,
+    kShortcutRecord = 600,kShortcutClear,kAllPathsRecord,kAllPathsClear,kFillColor,kOutlineColor,
+    kFillOpacity,kOutlineWidth,
 };
 
 struct MenuLayout
@@ -136,6 +139,11 @@ struct MenuState
     bool dragging_opacity = false;
     HitTarget slider_target = HitTarget::kOpacity;
     bool popup_open = false;
+    int recording = 0;
+    std::array<bool,256> recording_down{};
+    Shortcut recording_value;
+    Config shortcut_config;
+    std::wstring shortcut_error;
     POINT drag_cursor_start{0, 0};
     RECT drag_window_start{0, 0, 0, 0};
     int dpi = 96;
@@ -223,22 +231,27 @@ bool floating_panel_page()
         g_menu.config_bit == ipc::kFeatureWiki || g_menu.config_bit == ipc::kFeatureEnemyPrts;
 }
 
-int appearance_height()
-{
-    if (g_menu.config_bit == ipc::kFeatureEnemyRange) return 130;
-    if (g_menu.config_bit == ipc::kFeatureEnemyPaths) return 174;
-    return kAppearanceHeight + (floating_panel_page() ? 36 : 0);
+bool text_drawing_page() {
+    return g_menu.config_bit==ipc::kFeatureHpBars || g_menu.config_bit==ipc::kFeatureSpawnTimer ||
+        g_menu.config_bit==ipc::kFeatureOperatorStats || g_menu.config_bit==ipc::kFeatureEnemyStats;
 }
+int appearance_base_height()
+{
+    if (g_menu.config_bit == ipc::kFeatureEnemyRange) return 214;
+    if (g_menu.config_bit == ipc::kFeatureEnemyPaths) return 174;
+    return kAppearanceHeight + (floating_panel_page() ? 36 : 0) + (text_drawing_page()?84:0);
+}
+int appearance_height() { return appearance_base_height() + (g_menu.config_bit==ipc::kFeatureEnemyPaths?116:76); }
 
 int page_content_height()
 {
     if (g_menu.config_bit == 0) return S(106 + 36*std::popcount(g_menu.menu_features));
     if (g_menu.config_bit == kSettingsPage) return S(798 + 36*kFeatureCount);
-    if (g_menu.config_bit == ipc::kFeatureHpBars) return S(kAppearanceHeight+264);
-    if (g_menu.config_bit == ipc::kFeatureOperatorStats) return S(kAppearanceHeight+264+48+30*ipc::kStatCount+8);
-    if (g_menu.config_bit == ipc::kFeatureEnemyStats) return S(kAppearanceHeight+224+48+30*enemy_metrics::kMetrics.size()+8);
-    if (g_menu.config_bit == ipc::kFeatureEnemyPaths) return S(174+280);
-    if (g_menu.config_bit == ipc::kFeatureEnemyRange) return S(130+200);
+    if (g_menu.config_bit == ipc::kFeatureHpBars) return S(appearance_height()+264);
+    if (g_menu.config_bit == ipc::kFeatureOperatorStats) return S(appearance_height()+264+48+30*ipc::kStatCount+8);
+    if (g_menu.config_bit == ipc::kFeatureEnemyStats) return S(appearance_height()+224+48+30*enemy_metrics::kMetrics.size()+8);
+    if (g_menu.config_bit == ipc::kFeatureEnemyPaths) return S(appearance_height()+280);
+    if (g_menu.config_bit == ipc::kFeatureEnemyRange) return S(appearance_height()+330);
     if (g_menu.config_bit == ipc::kFeatureDamageNumbers)
         return S(appearance_height() + 48 + 30 * ipc::kStatCount + 5 * 36 + 8);
     if (g_menu.config_bit == ipc::kFeatureWiki) return S(appearance_height() + 32 + 12 * 32 + 44);
@@ -340,8 +353,8 @@ void compute_layout(int width, int height)
     layout.appearance_font = RECT{margin + width - padding - S(134), layout.viewport.top+S(84),
                                   margin + width - padding, layout.viewport.top+S(116)};
     layout.appearance_color = layout.appearance_font;
-    OffsetRect(&layout.appearance_color,0,S(g_menu.config_bit==ipc::kFeatureEnemyPaths?0:40));
-    const int reset_top=g_menu.config_bit==ipc::kFeatureEnemyRange?84:g_menu.config_bit==ipc::kFeatureEnemyPaths?128:168;
+    OffsetRect(&layout.appearance_color,0,S(g_menu.config_bit==ipc::kFeatureEnemyPaths || g_menu.config_bit==ipc::kFeatureEnemyRange?0:40));
+    const int reset_top=appearance_base_height()-(floating_panel_page()?82:46);
     layout.appearance_reset = RECT{margin+padding,layout.viewport.top+S(reset_top),
                                    margin+width-padding,layout.viewport.top+S(reset_top+32)};
 }
@@ -877,6 +890,7 @@ std::vector<ExtraControl> extra_controls()
     } else if(g_menu.config_bit==ipc::kFeatureEnemyRange) {
         top+=S(88);
         add(HitTarget::kLineWidth,L"线条粗细",g_menu.appearance.line_width,1,8,1);
+        add(HitTarget::kFillOpacity,L"填充不透明度",g_menu.appearance.fill_opacity,0,100,1);
     } else if(g_menu.config_bit==kSettingsPage) {
         top=g_menu.layout.viewport.top+S(270);
         add(HitTarget::kCacheLimit,L"PRTS 缓存上限",g_menu.cache_mb,10,5120,10);
@@ -894,6 +908,7 @@ void draw_extra_controls(HDC dc)
         if(toggle) { draw_switch(dc,control.track,control.value!=0); continue; }
         std::wstring value=std::to_wstring(control.value)+L" px";
         if(control.target==HitTarget::kPathSpeed) value=std::to_wstring(control.value)+L" px/s";
+        else if(control.target==HitTarget::kFillOpacity) value=std::to_wstring(control.value)+L"%";
         else if(control.target==HitTarget::kCacheLimit) value=std::to_wstring(control.value)+L" MB";
         else if(control.target==HitTarget::kPathLinger) {
             wchar_t text[32]{}; std::swprintf(text,32,L"%.1f s",control.value/1000.0); value=text;
@@ -915,7 +930,7 @@ RECT line_style_rect(int index)
     const int left=g_menu.layout.content.left+g_menu.layout.padding;
     const int right=g_menu.layout.content.right-g_menu.layout.padding;
     const int width=(right-left-2*S(6))/3;
-    const int top=feature_content_top()+S(g_menu.config_bit==ipc::kFeatureEnemyRange?160:240);
+    const int top=feature_content_top()+S(g_menu.config_bit==ipc::kFeatureEnemyRange?224:240);
     return RECT{left+index*(width+S(6)),top,left+index*(width+S(6))+width,top+S(32)};
 }
 
@@ -985,6 +1000,9 @@ bool set_extra_value(HitTarget target,int value)
         if(g_menu.callbacks.on_appearance) g_menu.callbacks.on_appearance(g_menu.config_bit,g_menu.appearance);
         return true;
     case HitTarget::kPathClick: options.path_on_click=value!=0; break;
+    case HitTarget::kFillOpacity:g_menu.appearance.fill_opacity=value;
+        if(g_menu.callbacks.on_appearance)g_menu.callbacks.on_appearance(g_menu.config_bit,g_menu.appearance);
+        return true;
     case HitTarget::kPathSpeed: options.path_speed=value; break;
     case HitTarget::kPathLinger: options.path_linger_ms=value; break;
     case HitTarget::kCacheLimit:
@@ -1024,21 +1042,14 @@ void draw_appearance_page(HDC dc)
     draw_text(dc,opacity.c_str(),RECT{right-S(60),top+S(26),right,top+S(48)},g_menu.body_font,
               theme::kTextSecondary,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
     draw_slider(dc,layout.appearance_opacity_track,g_menu.appearance.opacity,20);
-    if(g_menu.config_bit==ipc::kFeatureEnemyRange)
-    {
-        draw_option_button(dc,layout.appearance_reset,L"恢复本功能外观默认",theme::kCard,theme::kCardHover,
-                           theme::kTextSecondary,g_menu.hover==static_cast<int>(HitTarget::kAppearanceReset));
-        fill_rect(dc,RECT{left,top+S(124),right,top+S(125)},theme::kDivider);
-        return;
-    }
-    if(g_menu.config_bit!=ipc::kFeatureEnemyPaths) {
+    if(g_menu.config_bit!=ipc::kFeatureEnemyPaths && g_menu.config_bit!=ipc::kFeatureEnemyRange) {
     draw_text(dc,L"字体大小",RECT{left,layout.appearance_font.top,layout.appearance_font.left-S(8),
               layout.appearance_font.bottom},g_menu.body_font,theme::kTextPrimary,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
     const std::wstring font=g_menu.appearance.font_size>0?std::to_wstring(g_menu.appearance.font_size)+L" px":L"默认";
     draw_option_button(dc,layout.appearance_font,font.c_str(),theme::kCard,theme::kCardHover,theme::kTextPrimary,
                        g_menu.hover==static_cast<int>(HitTarget::kAppearanceFont));
     }
-    draw_text(dc,g_menu.config_bit==ipc::kFeatureEnemyPaths?L"路径颜色":L"文字颜色",RECT{left,layout.appearance_color.top,layout.appearance_color.left-S(8),
+    draw_text(dc,g_menu.config_bit==ipc::kFeatureEnemyPaths?L"路径颜色":g_menu.config_bit==ipc::kFeatureEnemyRange?L"轮廓颜色":L"文字颜色",RECT{left,layout.appearance_color.top,layout.appearance_color.left-S(8),
               layout.appearance_color.bottom},g_menu.body_font,theme::kTextPrimary,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
     wchar_t color_text[16]=L"默认";
     if(g_menu.appearance.text_color>=0)
@@ -1058,6 +1069,47 @@ void draw_appearance_page(HDC dc)
         draw_damage_row_toggle(dc,row,g_menu.appearance.click_through);
     }
     fill_rect(dc,RECT{left,top+S(appearance_height()-6),right,top+S(appearance_height()-5)},theme::kDivider);
+}
+
+RECT appearance_extra_rect(int logical_top) {
+    const auto& l=g_menu.layout;
+    return {l.content.right-l.padding-S(134),l.viewport.top+S(logical_top),l.content.right-l.padding,l.viewport.top+S(logical_top+32)};
+}
+void draw_extra_appearance(HDC dc) {
+    const int left=g_menu.layout.content.left+g_menu.layout.padding;
+    const auto draw=[&](int y,const wchar_t* label,const std::wstring& value,HitTarget target) {
+        const auto r=appearance_extra_rect(y);
+        draw_text(dc,label,RECT{left,r.top,r.left-S(8),r.bottom},g_menu.body_font,theme::kTextPrimary,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+        draw_option_button(dc,r,value.c_str(),theme::kCard,theme::kCardHover,theme::kTextPrimary,g_menu.hover==static_cast<int>(target));
+    };
+    const auto color=[](std::int32_t rgb){wchar_t text[16]=L"默认";if(rgb>=0)std::swprintf(text,16,L"#%06X",rgb);return std::wstring(text);};
+    if(g_menu.config_bit==ipc::kFeatureEnemyRange)draw(124,L"填充颜色",color(g_menu.appearance.fill_color),HitTarget::kFillColor);
+    if(text_drawing_page()) {
+        draw(164,L"文字描边颜色",color(g_menu.appearance.outline_color),HitTarget::kOutlineColor);
+        draw(204,L"文字描边粗细",std::to_wstring(g_menu.appearance.outline_width)+L" px",HitTarget::kOutlineWidth);
+    }
+}
+RECT shortcut_rect(bool all,bool clear=false) {
+    const auto& l=g_menu.layout;const int top=l.viewport.top+S(appearance_base_height()+(all?64:24));
+    const int right=l.content.right-l.padding;
+    return clear?RECT{right-S(32),top,right,top+S(32)}:RECT{l.content.left+l.padding+S(78),top,right-S(38),top+S(32)};
+}
+void draw_shortcuts(HDC dc) {
+    const int left=g_menu.layout.content.left+g_menu.layout.padding;
+    const int top=g_menu.layout.viewport.top+S(appearance_base_height());
+    draw_text(dc,L"快捷键",RECT{left,top,g_menu.layout.content.right,top+S(20)},g_menu.small_font,theme::kTextMuted,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+    const auto row=[&](bool all) {
+        const auto r=shortcut_rect(all);const auto clear=shortcut_rect(all,true);
+        const auto& key=all?g_menu.shortcut_config.all_paths_shortcut:g_menu.shortcut_config.shortcuts[feature_appearance_index(g_menu.config_bit)];
+        const std::wstring label=g_menu.recording==(all?2:1)?L"按下按键，松开完成":shortcut_label(key);
+        draw_text(dc,all?L"一键绘制":L"功能开关",RECT{left,r.top,r.left-S(4),r.bottom},g_menu.body_font,theme::kTextPrimary,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+        draw_option_button(dc,r,label.c_str(),theme::kCard,theme::kCardHover,theme::kTextPrimary,false);
+        draw_option_button(dc,clear,L"×",theme::kCard,theme::kCardHover,theme::kTextSecondary,false);
+    };
+    row(false);if(g_menu.config_bit==ipc::kFeatureEnemyPaths)row(true);
+    if(!g_menu.shortcut_error.empty())draw_text(dc,g_menu.shortcut_error.c_str(),
+        RECT{left,top+S(g_menu.config_bit==ipc::kFeatureEnemyPaths?98:58),g_menu.layout.content.right-g_menu.layout.padding,top+S(g_menu.config_bit==ipc::kFeatureEnemyPaths?114:74)},
+        g_menu.small_font,theme::kDanger,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
 }
 
 RECT wiki_field_rect(int index)
@@ -1210,6 +1262,8 @@ void draw_feature_page(HDC dc)
     const int right = layout.content.right - layout.padding;
     const int top = feature_content_top();
     draw_appearance_page(dc);
+    draw_extra_appearance(dc);
+    draw_shortcuts(dc);
     draw_extra_controls(dc);
     draw_line_styles(dc);
     if(g_menu.config_bit==ipc::kFeatureOperatorStats) { draw_damage_config_page(dc); return; }
@@ -1393,17 +1447,27 @@ HitTarget hit_test(POINT point)
     }
     else if(g_menu.config_bit!=0)
     {
+        for(int i=0;i<(g_menu.config_bit==ipc::kFeatureEnemyPaths?2:1);++i) {
+            const auto r=shortcut_rect(i!=0),clear=shortcut_rect(i!=0,true);
+            if(PtInRect(&r,point))return i?HitTarget::kAllPathsRecord:HitTarget::kShortcutRecord;
+            if(PtInRect(&clear,point))return i?HitTarget::kAllPathsClear:HitTarget::kShortcutClear;
+        }
+        if(g_menu.config_bit==ipc::kFeatureEnemyRange) {
+            const auto r=appearance_extra_rect(124);if(PtInRect(&r,point))return HitTarget::kFillColor;
+        }
+        if(text_drawing_page()) {
+            const auto color=appearance_extra_rect(164),width=appearance_extra_rect(204);
+            if(PtInRect(&color,point))return HitTarget::kOutlineColor;
+            if(PtInRect(&width,point))return HitTarget::kOutlineWidth;
+        }
         if(g_menu.config_bit==ipc::kFeatureEnemyRange || g_menu.config_bit==ipc::kFeatureEnemyPaths)
             for(int i=0;i<3;++i) {
                 const auto button=line_style_rect(i);
                 if(PtInRect(&button,point)) return static_cast<HitTarget>(static_cast<int>(HitTarget::kLineStyleFirst)+i);
             }
         if(PtInRect(&layout.appearance_opacity_hit,point)) return HitTarget::kAppearanceOpacity;
-        if(g_menu.config_bit!=ipc::kFeatureEnemyRange)
-        {
-            if(g_menu.config_bit!=ipc::kFeatureEnemyPaths && PtInRect(&layout.appearance_font,point)) return HitTarget::kAppearanceFont;
-            if(PtInRect(&layout.appearance_color,point)) return HitTarget::kAppearanceColor;
-        }
+        if(g_menu.config_bit!=ipc::kFeatureEnemyPaths && g_menu.config_bit!=ipc::kFeatureEnemyRange && PtInRect(&layout.appearance_font,point)) return HitTarget::kAppearanceFont;
+        if(PtInRect(&layout.appearance_color,point)) return HitTarget::kAppearanceColor;
         if(PtInRect(&layout.appearance_reset,point)) return HitTarget::kAppearanceReset;
         if(floating_panel_page() && hit_row_switch(click_through_row(),point)) return HitTarget::kClickThrough;
         if(g_menu.config_bit==ipc::kFeatureWiki || g_menu.config_bit==ipc::kFeatureEnemyPrts)
@@ -1490,6 +1554,7 @@ void sync_page_config(const Config& config)
     g_menu.menu_features=config.menu_features&kMenuFeatureMask;
     g_menu.feature_order=config.feature_order;
     g_menu.overlay=config.overlay;
+    g_menu.shortcut_config=config;
     g_menu.cache_mb=config.prts_cache_mb;
     g_menu.main_height=std::clamp(config.menu_height,400,900);
     g_menu.cache_path=g_menu.callbacks.get_prts_cache_path?g_menu.callbacks.get_prts_cache_path():config.prts_cache_path;
@@ -1507,6 +1572,7 @@ void sync_page_config(const Config& config)
 
 void open_page(std::uint32_t bit)
 {
+    g_menu.recording=0;g_menu.shortcut_error.clear();
     finish_opacity_drag();
     g_menu.config_bit = bit;
     g_menu.viewport.scroll = 0;
@@ -1520,6 +1586,7 @@ void open_page(std::uint32_t bit)
 
 void hide_menu()
 {
+    g_menu.recording=0;
     g_menu.hints.hide();
     g_menu.pressed = HitTarget::kNone;
     finish_opacity_drag();
@@ -1580,17 +1647,19 @@ void choose_feature_font()
     }
 }
 
-void choose_feature_color()
+void choose_feature_color(HitTarget target=HitTarget::kAppearanceColor)
 {
+    auto& selected=target==HitTarget::kFillColor?g_menu.appearance.fill_color:
+        target==HitTarget::kOutlineColor?g_menu.appearance.outline_color:g_menu.appearance.text_color;
     struct ColorOption { const wchar_t* label; std::int32_t rgb; };
     constexpr ColorOption colors[]={
-        {L"默认文字颜色",-1}, {L"白色",0xFFFFFF}, {L"浅灰",0xC0C0C0},
+        {L"默认颜色",-1}, {L"白色",0xFFFFFF}, {L"浅灰",0xC0C0C0},
         {L"黄色",0xFFE066}, {L"绿色",0x62D68A}, {L"蓝色",0x72AEFF},
         {L"橙色",0xFFAE66}, {L"粉色",0xFF99CC}, {L"红色",0xFF6666}, {L"黑色",0x000000},
     };
     HMENU options=CreatePopupMenu();
     for(int i=0;i<static_cast<int>(std::size(colors));++i)
-        AppendMenuW(options,MF_STRING|(g_menu.appearance.text_color==colors[i].rgb?MF_CHECKED:0),i+1,colors[i].label);
+        AppendMenuW(options,MF_STRING|(selected==colors[i].rgb?MF_CHECKED:0),i+1,colors[i].label);
     AppendMenuW(options,MF_SEPARATOR,0,nullptr);
     AppendMenuW(options,MF_STRING,100,L"自定义 RGB 颜色…");
     POINT cursor{};GetCursorPos(&cursor);
@@ -1600,7 +1669,7 @@ void choose_feature_color()
     bool changed=false;
     if(choice>0 && choice<=static_cast<int>(std::size(colors)))
     {
-        g_menu.appearance.text_color=colors[choice-1].rgb;
+        selected=colors[choice-1].rgb;
         changed=true;
     }
     else if(choice==100)
@@ -1609,12 +1678,12 @@ void choose_feature_color()
         CHOOSECOLORW picker{};
         picker.lStructSize=sizeof(picker);
         picker.hwndOwner=g_menu.hwnd;
-        picker.rgbResult=g_menu.appearance.text_color>=0?rgb_color(g_menu.appearance.text_color):theme::kTextPrimary;
+        picker.rgbResult=selected>=0?rgb_color(selected):theme::kTextPrimary;
         picker.lpCustColors=custom_colors;
         picker.Flags=CC_FULLOPEN|CC_RGBINIT;
         if(ChooseColorW(&picker))
         {
-            g_menu.appearance.text_color=(GetRValue(picker.rgbResult)<<16)|
+            selected=(GetRValue(picker.rgbResult)<<16)|
                 (GetGValue(picker.rgbResult)<<8)|GetBValue(picker.rgbResult);
             changed=true;
         }
@@ -1690,6 +1759,26 @@ void choose_game_path()
 
 void activate_target(HitTarget target)
 {
+    if(target==HitTarget::kShortcutRecord || target==HitTarget::kAllPathsRecord) {
+        g_menu.recording=target==HitTarget::kAllPathsRecord?2:1;
+        g_menu.recording_down={};g_menu.recording_value={};g_menu.shortcut_error.clear();render();return;
+    }
+    if(target==HitTarget::kShortcutClear || target==HitTarget::kAllPathsClear) {
+        const bool all=target==HitTarget::kAllPathsClear;g_menu.recording=0;g_menu.shortcut_error.clear();
+        if(all)g_menu.shortcut_config.all_paths_shortcut={};
+        else g_menu.shortcut_config.shortcuts[feature_appearance_index(g_menu.config_bit)]={};
+        if(g_menu.callbacks.on_shortcut)g_menu.callbacks.on_shortcut(g_menu.config_bit,all,{});
+        render();return;
+    }
+    if(target==HitTarget::kFillColor || target==HitTarget::kOutlineColor){choose_feature_color(target);return;}
+    if(target==HitTarget::kOutlineWidth) {
+        HMENU popup=CreatePopupMenu();
+        for(int i=0;i<=3;++i)AppendMenuW(popup,MF_STRING|(g_menu.appearance.outline_width==i?MF_CHECKED:0),i+1,(i?std::to_wstring(i)+L" px":L"关闭描边").c_str());
+        POINT p{};GetCursorPos(&p);g_menu.popup_open=true;
+        const int choice=TrackPopupMenu(popup,TPM_RETURNCMD|TPM_NONOTIFY,p.x,p.y,0,g_menu.hwnd,nullptr);
+        DestroyMenu(popup);g_menu.popup_open=false;
+        if(choice){g_menu.appearance.outline_width=choice-1;apply_appearance();render();}return;
+    }
     if(target==HitTarget::kGamePath) { choose_game_path(); return; }
     if(target==HitTarget::kCreateShortcut || target==HitTarget::kRepairEnvironment) {
         const auto& callback=target==HitTarget::kCreateShortcut?g_menu.callbacks.on_create_shortcut:g_menu.callbacks.on_repair_environment;
@@ -2080,6 +2169,7 @@ LRESULT CALLBACK menu_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
         return 0;
     case WM_KEYDOWN:
     case WM_SYSKEYDOWN:
+        if(g_menu.recording)return 0;
         if (wparam == VK_ESCAPE)
         {
             if (g_menu.config_bit != 0) open_page(0);
@@ -2110,6 +2200,41 @@ LRESULT CALLBACK menu_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
 }
 
 }  // namespace
+
+bool menu_record_shortcut_key(unsigned key,bool down)
+{
+    if(!g_menu.visible || !g_menu.recording)return false;
+    key=shortcut_key(key);if(key>=256 || !key)return true;
+    if(down && key==VK_ESCAPE){g_menu.recording=0;g_menu.shortcut_error.clear();render();return true;}
+    g_menu.recording_down[key]=down;
+    if(down) {
+        auto text=shortcut_string(g_menu.recording_value);
+        if(std::find(g_menu.recording_value.keys.begin(),g_menu.recording_value.keys.end(),key)==g_menu.recording_value.keys.end()) {
+            if(std::count_if(g_menu.recording_value.keys.begin(),g_menu.recording_value.keys.end(),[](auto k){return k!=0;})>=8) {
+                g_menu.recording=0;g_menu.shortcut_error=L"最多支持 8 个按键";render();return true;
+            }
+            if(!text.empty())text+=L"+";
+            g_menu.recording_value=shortcut_parse(text+std::to_wstring(key));
+        }
+        return true;
+    }
+    if(std::any_of(g_menu.recording_down.begin(),g_menu.recording_down.end(),[](bool v){return v;}) || g_menu.recording_value.empty())return true;
+    const bool all=g_menu.recording==2;const auto binding=g_menu.recording_value;
+    const auto current=feature_appearance_index(g_menu.config_bit);
+    g_menu.recording=0;
+    for(std::size_t i=0;i<g_menu.shortcut_config.shortcuts.size();++i) {
+        if((all || i!=current) && binding==g_menu.shortcut_config.shortcuts[i]) {
+            g_menu.shortcut_error=L"已被“"+std::wstring(feature_label(kAppearanceFeatures[i]))+L"”使用";render();return true;
+        }
+    }
+    if(!all && binding==g_menu.shortcut_config.all_paths_shortcut) {
+        g_menu.shortcut_error=L"已被“一键绘制”使用";render();return true;
+    }
+    if(all)g_menu.shortcut_config.all_paths_shortcut=binding;else g_menu.shortcut_config.shortcuts[current]=binding;
+    g_menu.shortcut_error.clear();
+    if(g_menu.callbacks.on_shortcut)g_menu.callbacks.on_shortcut(g_menu.config_bit,all,binding);
+    render();return true;
+}
 
 bool menu_create(HINSTANCE instance, MenuCallbacks callbacks)
 {

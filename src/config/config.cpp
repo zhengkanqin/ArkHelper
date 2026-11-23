@@ -340,7 +340,14 @@ bool config_load(const std::wstring& path, Config& out)
         if (find_integer(text, (prefix + "line_width").c_str(), value)) appearance.line_width = std::clamp(value, 1, 8);
         if (find_integer(text, (prefix + "line_style").c_str(), value)) appearance.line_style = std::clamp(value, 0, 2);
         if (find_integer(text, (prefix + "click_through").c_str(), value)) appearance.click_through = value != 0;
+        if (find_integer(text, (prefix + "fill_color").c_str(), value)) appearance.fill_color = value >= 0 && value <= 0xffffff ? value : -1;
+        if (find_integer(text, (prefix + "fill_opacity").c_str(), value)) appearance.fill_opacity = std::clamp(value,0,100);
+        if (find_integer(text, (prefix + "outline_color").c_str(), value)) appearance.outline_color = value >= 0 && value <= 0xffffff ? value : -1;
+        if (find_integer(text, (prefix + "outline_width").c_str(), value)) appearance.outline_width = std::clamp(value,0,3);
+        std::wstring binding;
+        if(find_string(text,(prefix+"hotkey").c_str(),binding))out.shortcuts[index]=shortcut_parse(binding);
     }
+    {std::wstring binding;if(find_string(text,"all_paths_hotkey",binding))out.all_paths_shortcut=shortcut_parse(binding);}
     if (find_integer(text, "ui_scale", value))
     {
         const bool allowed = value == 80 || value == 100 || value == 120 || value == 150;
@@ -567,7 +574,13 @@ bool config_save(const std::wstring& path, const Config& config)
         contents += ",\n    \"" + prefix + "_line_width\": " + std::to_string(appearance.line_width);
         contents += ",\n    \"" + prefix + "_line_style\": " + std::to_string(appearance.line_style);
         contents += ",\n    \"" + prefix + "_click_through\": " + std::to_string(appearance.click_through ? 1 : 0);
+        contents += ",\n    \"" + prefix + "_fill_color\": " + std::to_string(appearance.fill_color);
+        contents += ",\n    \"" + prefix + "_fill_opacity\": " + std::to_string(appearance.fill_opacity);
+        contents += ",\n    \"" + prefix + "_outline_color\": " + std::to_string(appearance.outline_color);
+        contents += ",\n    \"" + prefix + "_outline_width\": " + std::to_string(appearance.outline_width);
+        contents += ",\n    \"" + prefix + "_hotkey\": \"" + escape_json_string(shortcut_string(config.shortcuts[index])) + "\"";
     }
+    contents += ",\n    \"all_paths_hotkey\": \""+escape_json_string(shortcut_string(config.all_paths_shortcut))+"\"";
     const auto& drawing=config.overlay;
     contents += ",\n    \"damage_compact\": " + std::to_string(config.damage_compact ? 1 : 0);
     contents += ",\n    \"damage_show_devices\": " + std::to_string(config.damage_show_devices ? 1 : 0);

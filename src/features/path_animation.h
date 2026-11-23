@@ -5,6 +5,8 @@
 #include <cmath>
 #include <limits>
 #include <span>
+#include <vector>
+#include <unordered_set>
 #include "features.h"
 
 namespace arkhelp::features {
@@ -15,7 +17,7 @@ public:
         std::uint64_t id=0, started=0, updated=0, absent_since=0;
         ipc::PathEntry path{};
         float progress=0, length=0, consumed=0, last_x=0, last_y=0;
-        bool ready=false, complete=false, have_position=false, located=true;
+        bool ready=false, complete=false, have_position=false, located=true, bulk=false;
     };
     struct Hovered {
         std::array<std::uint64_t,ipc::kMaxUnits> ids{};
@@ -28,6 +30,10 @@ public:
     void invalidate_projection(std::uint64_t now) { reset(); projection_after_ms_=now; }
     std::span<const std::uint64_t> requests() const { return {requests_.data(),request_count_}; }
     const auto& playbacks() const { return playing_; }
+    void start_all(std::uint32_t generation) {
+        playing_.assign(ipc::kMaxPaths,Playback{});all_request_=ipc::all_paths_id(generation);
+        all_batch_=0;all_cycle_complete_=false;all_finished_.clear();
+    }
 
     void update(const ipc::BattleSnapshot& snapshot,const PointerState& pointer,float scale,
                 std::uint64_t now,int width,int height,const OverlayOptions& options) {
@@ -39,9 +45,37 @@ public:
         }
         last_tick_=now;
         request_count_=0;
+        if(all_request_ && snapshot.path_all_request==all_request_ && snapshot.path_all_batch!=all_batch_) {
+            all_batch_=snapshot.path_all_batch;
+            all_cycle_complete_|=snapshot.path_all_cycle_complete!=0;
+            for(std::uint32_t i=0;i<std::min(snapshot.path_count,ipc::kMaxPaths);++i) {
+                const auto& path=snapshot.paths[i];
+                if(!path.tracking_id || path.battle_serial!=serial_ || all_finished_.contains(path.tracking_id))continue;
+                auto found=std::find_if(playing_.begin(),playing_.end(),[&](const auto& item){return item.id==path.tracking_id;});
+                if(!(path.flags&ipc::kPathValid)) {
+                    if(path.flags&ipc::kPathGone){if(found!=playing_.end())*found={};all_finished_.insert(path.tracking_id);}
+                    continue;
+                }
+                if(path.point_count<2 || path.point_count>ipc::kMaxPathPoints ||
+                   !path.sampled_ms || path.sampled_ms<=projection_after_ms_ ||
+                   path.sampled_ms>now || now-path.sampled_ms>1000)continue;
+                bool valid=true;
+                for(std::uint32_t p=0;p<path.point_count;++p)
+                    valid=valid && std::isfinite(path.points[p].x) && std::isfinite(path.points[p].y);
+                if(!valid || !(path_length(path)>0))continue;
+                if(found==playing_.end()) {
+                    found=std::find_if(playing_.begin(),playing_.end(),[](const auto& item){return !item.id;});
+                    if(found==playing_.end()) {
+                        if(playing_.size()>=8192)continue;
+                        playing_.emplace_back();found=std::prev(playing_.end());
+                    }
+                    found->id=path.tracking_id;found->started=found->updated=now;found->bulk=true;
+                }
+            }
+        }
         const auto hovered=hovered_enemies(snapshot,pointer,scale);
         for(auto& item:playing_) if(item.id) {
-            bool alive=ipc::is_spawn_path(item.id);
+            bool alive=item.bulk || ipc::is_spawn_path(item.id);
             for(std::uint32_t i=0;i<std::min(snapshot.unit_count,ipc::kMaxUnits);++i)
                 if(snapshot.units[i].tracking_id==item.id && (snapshot.units[i].flags&ipc::kUnitValid)) alive=true;
             if(!alive) item=Playback{};
@@ -64,7 +98,7 @@ public:
             for(std::uint32_t i=0;i<std::min(snapshot.unit_count,ipc::kMaxUnits);++i)
                 if(snapshot.units[i].tracking_id==item.id && (snapshot.units[i].flags&ipc::kUnitValid)) unit=&snapshot.units[i];
             const bool spawn=ipc::is_spawn_path(item.id);
-            if(!unit && !spawn) { item=Playback{}; continue; }
+            if(!unit && !spawn && !item.bulk) { item=Playback{}; continue; }
             {
                 for(std::uint32_t i=0;i<std::min(snapshot.path_count,ipc::kMaxPaths);++i) {
                     const auto& path=snapshot.paths[i];
@@ -101,17 +135,22 @@ public:
             }
             // Keep the original trigger armed while this instance remains hovered:
             // a slow first capture must still be able to fulfill a real click.
-            if(!item.ready && now-item.started>3000 && !hovered.contains(item.id)) { item=Playback{}; continue; }
+            if(!item.ready && now-item.started>3000 && !hovered.contains(item.id) && !item.bulk) { item=Playback{}; continue; }
             // Leaving during drawing cannot cancel it. The linger clock starts only
             // after drawing completes, and resets whenever the pointer returns.
             if(item.complete && !hovered.contains(item.id)) {
                 if(!item.absent_since) item.absent_since=now;
                 if(now-item.absent_since>=static_cast<std::uint64_t>(std::clamp(options.path_linger_ms,0,10000))) {
+                    if(item.bulk)all_finished_.insert(item.id);
                     item=Playback{}; continue;
                 }
             } else item.absent_since=0;
             // Keep the remaining route current while the animation or its residue is visible.
-            request(item.id);
+            if(!item.bulk)request(item.id);
+        }
+        if(all_request_) {
+            if(all_cycle_complete_ && std::none_of(playing_.begin(),playing_.end(),[](const auto& p){return p.id && p.bulk;}))all_request_=0;
+            else {request_count_=0;request(all_request_);}
         }
         // Hovering a group requests every nearby instance. Click mode still needs a real click.
         for(std::size_t h=0;h<hovered.count;++h) request(hovered.ids[h]);
@@ -194,7 +233,11 @@ private:
         if(std::find(requests_.begin(),requests_.begin()+request_count_,id)==requests_.begin()+request_count_)
             requests_[request_count_++]=id;
     }
-    std::array<Playback,ipc::kMaxPaths> playing_{};
+    std::vector<Playback> playing_=std::vector<Playback>(ipc::kMaxPaths);
+    std::uint64_t all_request_=0;
+    std::uint32_t all_batch_=0;
+    bool all_cycle_complete_=false;
+    std::unordered_set<std::uint64_t> all_finished_;
     std::array<std::uint64_t,ipc::kMaxPaths> requests_{};
     std::size_t request_count_=0;
     std::uint32_t serial_=0;

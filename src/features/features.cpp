@@ -552,10 +552,14 @@ void draw_enemy_ranges(gfx::Surface& surface, const ipc::BattleSnapshot& snapsho
         }
         ++count;
     }
-    // One union-style low-opacity fill avoids darkening the entire map when ranges overlap.
+    const auto rgb=[](std::int32_t value,float alpha) {return gfx::Color{
+        ((value>>16)&255)/255.f,((value>>8)&255)/255.f,(value&255)/255.f,alpha};};
+    const auto outline=appearance.text_color<0?0xFF9E4D:appearance.text_color;
+    const auto fill=appearance.fill_color<0?(appearance.text_color<0?0xFF8F40:outline):appearance.fill_color;
+    // One compound fill prevents overlaps accumulating opacity.
     surface.draw_polygons(points.data(), count, ipc::kRangePointCount,
-                           gfx::Color{1.0f, 0.56f, 0.25f, 0.035f},
-                           gfx::Color{1.0f, 0.62f, 0.30f, 0.48f},
+                           rgb(fill,std::clamp(appearance.fill_opacity,0,100)/100.f),
+                           rgb(outline,0.48f),
                            std::max(1.0f,std::clamp(appearance.line_width,1,8)*scale),appearance.line_style);
 }
 

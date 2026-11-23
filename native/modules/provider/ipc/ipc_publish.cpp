@@ -567,13 +567,18 @@ void fill_paths(ipc::BattleSnapshot& snapshot, const capture::Status& status, co
     if (!status.in_battle || status.stale ||
         !ipc::command_feature_enabled(g_commands, ipc::kFeatureEnemyPaths)) return;
     capture::PathSample samples[ipc::kMaxPaths]{};
-    const int count = capture::path_snapshot(samples, ipc::kMaxPaths);
+    bool cycle_complete=false;
+    const int count = capture::path_snapshot(samples, ipc::kMaxPaths,&snapshot.path_all_request,&snapshot.path_all_batch,&cycle_complete);
+    snapshot.path_all_cycle_complete=cycle_complete;
     if (!client) return;
     const float width = static_cast<float>(client.width), height = static_cast<float>(client.height);
     if (width < 16 || height < 16) return;
     const auto now = GetTickCount64();
     for (int index = 0; index < count; ++index) {
         const auto& sample = samples[index];
+        if(snapshot.path_all_request && sample.battle_serial==status.battle_serial && sample.tracking_id && !(sample.flags&ipc::kPathValid)) {
+            snapshot.paths[snapshot.path_count++]=sample;continue;
+        }
         if (!(sample.flags & ipc::kPathValid) || sample.battle_serial != status.battle_serial ||
             !sample.tracking_id || !sample.sampled_ms || sample.sampled_ms > now || now-sample.sampled_ms > 1000 ||
             sample.point_count < 2 || sample.point_count > ipc::kMaxPathPoints) continue;

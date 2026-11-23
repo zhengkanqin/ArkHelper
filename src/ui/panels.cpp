@@ -1612,6 +1612,7 @@ void send_shared_mouse(PanelState& panel, const SharedMouseEvent& event)
 void dispatch_shared_mouse(const SharedMouseEvent& event)
 {
     if (event.message == WM_CANCELMODE) { cancel_shared_input(); return; }
+    if (event.message < WM_MOUSEFIRST || event.message > WM_MOUSELAST) return;
     if (g_shared_gesture && (!g_shared_gesture->visible || !g_shared_gesture->appearance.click_through ||
         GetCapture() || GetAncestor(GetForegroundWindow(), GA_ROOT) != g_shared_source)) cancel_shared_input();
 

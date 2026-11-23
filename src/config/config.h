@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 #include <arkhelp/ipc.h>
+#include "shortcuts.h"
 
 // 本地配置（ArkHelper/config/arkhelp.json）。
 // 字段刻意保持扁平：手写解析器只支持本程序自己写出的格式，
@@ -21,6 +22,10 @@ struct FeatureAppearance
     int line_width = 2;     // logical pixels, 1..8; line features only
     int line_style = 0;     // 0 solid, 1 dashed, 2 dotted
     bool click_through = false; // panel and underlying application share native mouse gestures
+    std::int32_t fill_color = -1;
+    int fill_opacity = 4;
+    std::int32_t outline_color = -1;
+    int outline_width = 1;
     bool operator==(const FeatureAppearance&) const = default;
 };
 
@@ -96,6 +101,8 @@ struct Config
     int menu_opacity = 100;
     int menu_height = 572; // logical pixels; main menu bottom-edge resize, 400..900
     std::array<FeatureAppearance, kAppearanceFeatures.size()> appearances{};
+    std::array<Shortcut,kAppearanceFeatures.size()> shortcuts{};
+    Shortcut all_paths_shortcut;
     std::uint32_t menu_features = kMenuFeatureMask;
     FeatureOrder feature_order = kDefaultFeatureOrder;
     OverlayOptions overlay;

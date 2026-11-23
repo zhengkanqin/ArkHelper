@@ -1,4 +1,4 @@
-// ArkHelper IPC contract v11 (mapping names retain their original .v1 suffix).
+// ArkHelper IPC contract v12 (mapping names retain their original .v1 suffix).
 //
 // Two named shared-memory sections connect the in-game provider plugin (writer of the battle
 // snapshot, reader of commands) with the external ArkHelper.exe overlay (writer of commands, reader
@@ -22,7 +22,7 @@
 
 namespace arkhelp::ipc {
 
-inline constexpr std::uint32_t kVersion = 11;
+inline constexpr std::uint32_t kVersion = 12;
 inline constexpr std::uint32_t kBattleMagic = 0x42484841u;   // "AHHB"
 inline constexpr std::uint32_t kCommandMagic = 0x43484841u;  // "AHHC"
 
@@ -46,6 +46,9 @@ inline constexpr std::uint32_t kLevelIdCapacity = 128;
 // Path targets reserve the high bit for a route preview. Live instance IDs keep
 // that bit clear; battle_serial independently validates either kind of target.
 inline constexpr std::uint64_t kSpawnPathTag = std::uint64_t{1} << 63;
+inline constexpr std::uint64_t kAllPathsTag = 0xfffe000000000000ull;
+inline constexpr std::uint64_t all_paths_id(std::uint32_t generation) { return generation ? kAllPathsTag | generation : 0; }
+inline constexpr bool is_all_paths(std::uint64_t id) { return (id & 0xffffffff00000000ull)==kAllPathsTag && (id & 0xffffffffu); }
 inline constexpr std::uint64_t spawn_path_id(std::uint32_t route) {
     return route < 65536 ? kSpawnPathTag | (static_cast<std::uint64_t>(route) + 1) : 0;
 }
@@ -211,6 +214,7 @@ enum PathPointFlags : std::uint32_t {
     kPathMoveTo = 1u << 0,          // start a new segment; never connect across a teleport
 };
 enum PathFlags : std::uint32_t {
+    kPathGone = 1u << 3,
     kPathValid = 1u << 0,
     kPathComplete = 1u << 1,        // the true remaining route end is included
     kPathTruncated = 1u << 2,       // a prefix only; never present its last point as the route end
@@ -263,6 +267,8 @@ struct BattleSnapshot {
     DamageEntry operators[kMaxUnits]{}; // Per-instance contributions and anchors; never added to team totals.
     std::uint64_t operator_ids[kMaxUnits]{};
     double device_metrics[kStatCount] = {}; // captured devices, including rows beyond the display limit
+    std::uint64_t path_all_request = 0;
+    std::uint32_t path_all_batch = 0, path_all_cycle_complete = 0;
 };
 
 enum CommandFlags : std::uint32_t {

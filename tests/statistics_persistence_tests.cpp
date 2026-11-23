@@ -73,12 +73,21 @@ void configuration(const std::filesystem::path& directory) {
     config.overlay.enemy_order=L"weight,hp,atk,max_hp,def,resistance,move_speed,attack_speed,attack_interval,block,life_point";
     arkhelp::feature_appearance(config,arkhelp::ipc::kFeatureEnemyRange).line_width=7;
     arkhelp::feature_appearance(config,arkhelp::ipc::kFeatureEnemyRange).line_style=1;
+    auto& range_style=arkhelp::feature_appearance(config,arkhelp::ipc::kFeatureEnemyRange);
+    range_style.text_color=0x123456;range_style.fill_color=0xABCDEF;range_style.fill_opacity=23;
+    auto& hp_style=arkhelp::feature_appearance(config,arkhelp::ipc::kFeatureHpBars);
+    hp_style.outline_color=0x654321;hp_style.outline_width=3;
+    config.shortcuts[0]=arkhelp::shortcut_parse(L"17+65");config.shortcuts[3]=arkhelp::shortcut_parse(L"72");
+    config.all_paths_shortcut=arkhelp::shortcut_parse(L"16+17+80");
     arkhelp::feature_appearance(config,arkhelp::ipc::kFeatureEnemyPaths).line_width=3;
     arkhelp::feature_appearance(config,arkhelp::ipc::kFeatureEnemyPaths).line_style=2;
     check(arkhelp::config_save(path.wstring(),config),"configuration save failed");
     arkhelp::Config restored;
     check(arkhelp::config_load(path.wstring(),restored),"saved configuration did not reload");
     check(restored.damage_show_devices && restored.overlay.operator_show_devices,"device visibility preferences did not persist");
+    check(restored.shortcuts==config.shortcuts && restored.all_paths_shortcut==config.all_paths_shortcut,"per-feature and all-path shortcuts did not persist");
+    check(arkhelp::feature_appearance(restored,arkhelp::ipc::kFeatureEnemyRange)==range_style &&
+        arkhelp::feature_appearance(restored,arkhelp::ipc::kFeatureHpBars)==hp_style,"range fill/color or text outline preferences did not persist");
     config.overlay.operator_show_devices=false;
     check(arkhelp::config_save(path.wstring(),config) && arkhelp::config_load(path.wstring(),restored) &&
         restored.damage_show_devices && !restored.overlay.operator_show_devices,"device settings must persist independently");

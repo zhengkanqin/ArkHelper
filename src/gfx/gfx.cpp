@@ -253,9 +253,10 @@ bool Surface::present(HWND window, int x, int y) {
                                ULW_ALPHA) != FALSE;
 }
 
-void Surface::set_style(float opacity, std::int32_t text_color) {
+void Surface::set_style(float opacity, std::int32_t text_color,std::int32_t outline_color,float outline_width) {
     opacity_ = std::clamp(opacity, 0.0f, 1.0f);
     text_color_ = text_color;
+    outline_color_=outline_color;outline_width_=std::clamp(outline_width,0.f,9.f);
 }
 
 Color Surface::styled_color(const Color& color, bool text) const {
@@ -413,16 +414,18 @@ void Surface::draw_text(const std::wstring& text, float x, float top, float size
     rect.top = top;
     rect.bottom = top + box_height;
     const std::uint32_t length = static_cast<std::uint32_t>(text.size());
-    if (outline) {
-        const D2D1_COLOR_F outline_color = to_d2d_color(styled_color(Color{0.03f, 0.04f, 0.06f, 0.93f}));
+    if (outline && outline_width_>0) {
+        Color color{0.03f,0.04f,0.06f,0.93f};
+        if(outline_color_>=0){color.r=((outline_color_>>16)&255)/255.f;color.g=((outline_color_>>8)&255)/255.f;color.b=(outline_color_&255)/255.f;}
+        const D2D1_COLOR_F outline_color = to_d2d_color(styled_color(color));
         brush_->SetColor(outline_color);
         const float offsets[4][2] = {{1.0f, 0.0f}, {-1.0f, 0.0f}, {0.0f, 1.0f}, {0.0f, -1.0f}};
         for (const auto& offset : offsets) {
             D2D1_RECT_F shifted = rect;
-            shifted.left += offset[0];
-            shifted.right += offset[0];
-            shifted.top += offset[1];
-            shifted.bottom += offset[1];
+            shifted.left += offset[0]*outline_width_;
+            shifted.right += offset[0]*outline_width_;
+            shifted.top += offset[1]*outline_width_;
+            shifted.bottom += offset[1]*outline_width_;
             target_->DrawText(text.c_str(), length, format, &shifted, brush_,
                               D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
         }

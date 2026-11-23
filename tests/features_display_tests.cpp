@@ -9,6 +9,7 @@ namespace {
 struct Text { std::wstring value; float x,y,size; };
 std::vector<Text> texts;
 float range_width=0;int range_style=-1;
+arkhelp::gfx::Color range_fill,range_outline;
 void check(bool condition,const char* message) { if(!condition) throw std::runtime_error(message); }
 }
 // Record the production renderer's draw commands without creating a desktop window.
@@ -20,8 +21,9 @@ void Surface::draw_text(const std::wstring& text,float x,float y,float size,cons
 }
 void Surface::fill_rounded_rect(float,float,float,float,float,const Color&) {}
 void Surface::stroke_rounded_rect(float,float,float,float,float,const Color&) {}
-void Surface::draw_polygons(const D2D1_POINT_2F*,std::uint32_t,std::uint32_t,const Color&,const Color&,float width,int style) {
+void Surface::draw_polygons(const D2D1_POINT_2F*,std::uint32_t,std::uint32_t,const Color& fill,const Color& outline,float width,int style) {
     range_width=width;range_style=style;
+    range_fill=fill;range_outline=outline;
 }
 }
 
@@ -159,6 +161,10 @@ int main() {
         FeatureAppearance style;style.line_width=5;style.line_style=2;
         features::draw_enemy_ranges(surface,snapshot,1.5f,style);
         check(range_width==7.5f && range_style==2,"range renderer lost scaled line width or style");
+        style.text_color=0x00FF00;style.fill_color=0x0000FF;style.fill_opacity=25;
+        features::draw_enemy_ranges(surface,snapshot,1,style);
+        check(range_outline.g==1 && range_outline.r==0 && range_fill.b==1 && range_fill.g==0 && range_fill.a==.25f,
+            "range outline/fill colors and fill opacity ignored actual settings");
         std::puts("PASS production feature display: nearest hover-only enemy, live availability, six-item limits, offsets/font, pause/end gating and styled range outlines");
     } catch(const std::exception& error) { std::fprintf(stderr,"FAIL %s\n",error.what()); return 1; }
 }

@@ -31,6 +31,7 @@ void shutdown();
 
 // True between a successful initialize() and shutdown().
 bool active();
+void trigger_all_paths();
 
 // Feature widget options: draw only while the battle is paused.
 void set_widget_config(bool hp_only_paused, bool spawn_only_paused, bool range_only_paused);

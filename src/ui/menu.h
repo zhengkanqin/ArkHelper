@@ -40,6 +40,7 @@ struct MenuCallbacks
     std::function<void(int ui_scale_percent)> on_ui_scale;
     std::function<void()> on_reset;
     std::function<void(std::uint32_t bit, const FeatureAppearance& appearance)> on_appearance;
+    std::function<void(std::uint32_t bit,bool all_paths,const Shortcut&)> on_shortcut;
     std::function<void(std::uint32_t feature, std::uint32_t mask)> on_wiki_fields;
     std::function<void(std::uint32_t mask, const FeatureOrder& order)> on_feature_menu;
     std::function<void(bool enabled)> on_auto_launch;
@@ -67,6 +68,7 @@ void menu_show(const Config& config, const RECT& anchor);
 void menu_hide();
 bool menu_is_visible();
 void menu_refresh();
+bool menu_record_shortcut_key(unsigned key,bool down);
 
 // 打开指定功能的配置页；窗口是否显示仍由 menu_show 控制。
 void menu_open_config(std::uint32_t bit);

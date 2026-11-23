@@ -10,6 +10,7 @@
 //  * `Runtime` is attached on the worker only for connection discovery. Live object reads and
 //    lazily resolved metadata stay on Unity's attached main thread inside the detour.
 #include "capture.h"
+#include "../ipc/spawn_selection.h"
 
 #include <windows.h>
 #include <arkhelp/ipc.h>
@@ -207,7 +208,17 @@ struct PathRequest {
 struct PathPayload {
     std::uint32_t count = 0;
     PathSample items[::arkhelp::ipc::kMaxPaths]{};
+    std::uint64_t all_request = 0;
+    std::uint32_t batch = 0;
+    bool cycle_complete = false;
 };
+struct AllPathWork {
+    std::uint64_t request=0;
+    std::uint32_t serial=0,batch=0;
+    std::size_t cursor=0;
+    std::vector<std::uint64_t> targets;
+};
+AllPathWork g_all_path_work;
 
 constexpr int kMaxProjectionTiles = 64;
 constexpr float kTileWorldSize = 1.0f;
@@ -981,14 +992,14 @@ PathRequest read_path_request() {
 }
 
 void update_paths(il2cpp::Runtime& runtime, const DetourState& state, void* controller, void* camera,
-                  const PathRequest& request, UnitPayload& units, void* const* unit_objects) {
+                  const PathRequest& request, UnitPayload& units, void* const* unit_objects,void* all_items,int all_count) {
     namespace ipc = ::arkhelp::ipc;
     PathPayload output;
     struct Publish {
         PathPayload& payload;
         ~Publish() { std::unique_lock lock(g_path_mutex, std::try_to_lock); if (lock) g_paths = payload; }
     } publish{output};
-    if (!request.enabled || request.battle_serial != state.serial || request.count == 0) return;
+    if (!request.enabled || request.battle_serial != state.serial || request.count == 0) {g_all_path_work={};return;}
     if (!camera) {
         log_optional_failure_once(g_path_failure_serial,state.serial,"Path","current camera unavailable"); return;
     }
@@ -1004,6 +1015,66 @@ void update_paths(il2cpp::Runtime& runtime, const DetourState& state, void* cont
         log_optional_failure_once(g_path_failure_serial,state.serial,"Path","map plane/camera matrices not validated"); return;
     }
     const auto projected_ms = GetTickCount64();
+    std::uint64_t all_request=0;
+    for(std::uint32_t i=0;i<request.count;++i)if(ipc::is_all_paths(request.ids[i]))all_request=request.ids[i];
+    if(all_request) {
+        std::unordered_map<std::uint64_t,void*> current;
+        for(int i=0;i<std::min(all_count,4096);++i) {
+            void* unit=runtime.at(all_items,i);
+            if(unit)current.emplace(g_enemy_reader.identity(runtime,unit,state.serial),unit);
+        }
+        if(g_all_path_work.request!=all_request || g_all_path_work.serial!=state.serial) {
+            std::unique_lock stage_lock(g_stage_mutex,std::try_to_lock);
+            if(!stage_lock || g_runtime_stage_serial!=state.serial)return;
+            g_all_path_work={};g_all_path_work.request=all_request;g_all_path_work.serial=state.serial;
+            for(const auto& [id,unit]:current)g_all_path_work.targets.push_back(id);
+            const auto& stage=g_runtime_stage;
+            const auto& schedule=g_spawn_reader.read(runtime,controller,state.serial,projected_ms,state.frame.counter(controller));
+            const auto scheduled=live::spawn_frames(schedule);
+            const auto selected=select_gate_spawns(stage,scheduled,state.frame.counter(controller),65536);
+            std::map<std::pair<int,int>,const Spawn*> first;
+            std::unordered_set<std::uint64_t> routes;
+            for(const auto& spawn:selected) {
+                const auto& route=stage.routes[spawn.route_index];const auto gate=std::pair{route.start_row,route.start_col};
+                auto& earliest=first[gate];
+                if(!earliest)earliest=&spawn;
+                const bool next=spawn.pending ? spawn.phase==earliest->phase : spawn.frame<=earliest->frame+150;
+                const auto id=ipc::spawn_path_id(spawn.route_index);
+                if(next && id && routes.insert(id).second)g_all_path_work.targets.push_back(id);
+            }
+        }
+        auto& work=g_all_path_work;
+        output.all_request=all_request;output.batch=++work.batch;
+        if(work.targets.empty()){output.cycle_complete=true;return;}
+        CaptureBudget batch_budget;
+        while(output.count<ipc::kMaxPaths && work.cursor<work.targets.size() && batch_budget.available()) {
+            const auto id=work.targets[work.cursor++];
+            PathSample sample;sample.tracking_id=id;sample.battle_serial=state.serial;sample.sampled_ms=projected_ms;
+            path_geometry::Route route;path_geometry::Point ground;
+            bool valid=false;
+            try {
+                if(ipc::is_spawn_path(id))valid=g_path_reader.read_spawn(runtime,controller,ipc::spawn_path_route(id),route,sample.route_revision,[&]{return batch_budget.available();});
+                else if(auto found=current.find(id);found!=current.end()) {
+                    if(live::scalar(runtime,found->second,"isAlive",1)==0)sample.flags=ipc::kPathGone;
+                    else if(g_range_reader.foot(runtime,found->second,ground))
+                        valid=g_path_reader.read(runtime,found->second,ground,route,sample.route_revision,[&]{return batch_budget.available();});
+                } else sample.flags=ipc::kPathGone;
+                if(valid)for(std::uint32_t p=0;p<route.count;++p) {
+                    range_geometry::Point2 point;
+                    if(!range_geometry::project(projection.view,projection.projection,range_geometry::world(projection.plane,route.points[p].point),point)){
+                        valid=false;break;
+                    }
+                    sample.points[sample.point_count++]={point.x,point.y,route.points[p].flags};
+                }
+                if(valid && sample.point_count>=2)sample.flags=ipc::kPathValid|(route.truncated?ipc::kPathTruncated:ipc::kPathComplete);
+            } catch(...){}
+            if(!(sample.flags&ipc::kPathValid))sample.point_count=0;
+            output.items[output.count++]=sample;
+        }
+        if(work.cursor>=work.targets.size()){work.cursor=0;output.cycle_complete=true;}
+        return;
+    }
+    g_all_path_work={};
     // Keep only still-requested, fresh routes so a bounded frame budget can rotate through a
     // crowd. A failed refresh clears that target immediately; stale routes expire in 1 second.
     {
@@ -1233,7 +1304,7 @@ void update_units(DetourState& state, void* controller) {
             payload.items[used++] = item;
         }
         payload.count = static_cast<std::uint32_t>(used);
-        update_paths(runtime, state, controller, camera, path_request, payload, range_units);
+        update_paths(runtime, state, controller, camera, path_request, payload, range_units,items,count);
         if (range_enabled && used > 0) {
             LARGE_INTEGER range_start{}, range_frequency{}, range_now{};
             bool range_budget = QueryPerformanceFrequency(&range_frequency) && QueryPerformanceCounter(&range_start);
@@ -2390,11 +2461,16 @@ void set_path_requests(bool enabled, std::uint32_t serial, const std::uint64_t* 
     g_path_request = request;
 }
 
-int path_snapshot(PathSample* out, int max) {
+int path_snapshot(PathSample* out, int max,std::uint64_t* all_request,std::uint32_t* batch,bool* cycle_complete) {
+    if(all_request)*all_request=0;if(batch)*batch=0;if(cycle_complete)*cycle_complete=false;
     if (!out || max <= 0) return 0;
     const auto request = read_path_request();
     if (!request.enabled || !request.count) return 0;
     std::lock_guard lock(g_path_mutex);
+    for(std::uint32_t r=0;r<request.count;++r)if(::arkhelp::ipc::is_all_paths(request.ids[r]) && request.ids[r]==g_paths.all_request) {
+        if(all_request)*all_request=g_paths.all_request;if(batch)*batch=g_paths.batch;if(cycle_complete)*cycle_complete=g_paths.cycle_complete;
+        const int count=std::min(max,static_cast<int>(g_paths.count));std::copy_n(g_paths.items,count,out);return count;
+    }
     int count = 0;
     for (std::uint32_t index = 0; index < g_paths.count && count < max; ++index) {
         const auto& path = g_paths.items[index];

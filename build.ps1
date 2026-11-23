@@ -177,6 +177,7 @@ if ($Target -eq 'Tests' -or ($Target -eq 'All' -and -not $SkipTests)) {
     Link (Join-Path $Tests 'prts_cache_tests.exe') @(
         Compile 'tests\prts_cache_tests.cpp'; Compile 'src\net\prts.cpp'; Compile 'src\net\prts_cache.cpp')
     Link (Join-Path $Tests 'path_animation_tests.exe') @(Compile 'tests\path_animation_tests.cpp')
+    Link (Join-Path $Tests 'shortcut_tests.exe') @(Compile 'tests\shortcut_tests.cpp')
     Link (Join-Path $Tests 'mouse_relay_tests.exe') @(Compile 'tests\mouse_relay_tests.cpp')
     Link (Join-Path $Tests 'path_capture_tests.exe') @(Compile 'tests\path_capture_tests.cpp')
     Link (Join-Path $Tests 'operator_capture_tests.exe') @(
@@ -241,6 +242,7 @@ if ($Target -eq 'Tests' -or ($Target -eq 'All' -and -not $SkipTests)) {
     Run-Test 'prts_client_tests'
     Run-Test 'prts_cache_tests'
     Run-Test 'path_animation_tests'
+    Run-Test 'shortcut_tests'
     Run-Test 'mouse_relay_tests'
     Run-Test 'path_capture_tests'
     Run-Test 'operator_capture_tests'

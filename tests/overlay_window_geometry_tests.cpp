@@ -69,7 +69,7 @@ int wmain() {
         const auto original_style = GetWindowLongPtrW(third, GWL_STYLE);
         const SIZE sizes[] = {{800,600},{1920,1080},{1280,720},{640,480},{1024,768},{800,600}};
         for (const auto& size : sizes) {
-            Sleep(35);
+            Sleep(kMinFrameIntervalMs+32);
             snapshot.published_ms = GetTickCount64();
             present_scene(snapshot, commands, 20, 20, size.cx, size.cy, 1.f, 0);
             RECT rect{}; GetWindowRect(g_window, &rect);
@@ -82,7 +82,7 @@ int wmain() {
                   "drawing surface retained the old resolution");
         }
         for (int i = 0; i < 12; ++i) {
-            Sleep(35);
+            Sleep(kMinFrameIntervalMs+32);
             snapshot.published_ms = GetTickCount64();
             present_scene(snapshot, commands, 20 + i, 20 + i, 800 + i * 8, 600 + i * 4, 1.f, 0);
         }

@@ -56,7 +56,7 @@ public:
     void begin_frame();
     void end_frame();
     // Independent opacity and optional RGB text override for the next feature's primitives.
-    void set_style(float opacity, std::int32_t text_color = -1);
+    void set_style(float opacity, std::int32_t text_color = -1,std::int32_t outline_color = -1,float outline_width = 1);
     // Copies the current pixels to the layered window at screen position (x, y).
     bool present(HWND window, int x, int y);
 
@@ -109,6 +109,8 @@ private:
     bool in_frame_ = false;
     float opacity_ = 1.0f;
     std::int32_t text_color_ = -1;
+    std::int32_t outline_color_ = -1;
+    float outline_width_ = 1;
     std::vector<TextFormatEntry> formats_;
 };
 

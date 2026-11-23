@@ -90,6 +90,8 @@ SharedMouseInput g_mouse_input;
 std::deque<SharedMouseEvent> g_clicks;
 std::uint32_t g_input_serial = 0;
 bool g_input_failed = false;
+bool g_all_path_trigger=false;
+std::uint32_t g_all_path_generation=0;
 std::function<void(std::uint32_t,std::span<const std::uint64_t>)> g_path_request_callback;
 
 struct GameWindowSearch {
@@ -278,9 +280,10 @@ void draw_scene(const ipc::BattleSnapshot& snapshot, const ipc::CommandState& co
                 float scale) {
     const bool paused = (snapshot.flags & ipc::kBattlePaused) != 0;
     g_surface.begin_frame();
-    const auto apply_style = [](std::uint32_t bit) -> const FeatureAppearance& {
+    const auto apply_style = [scale](std::uint32_t bit) -> const FeatureAppearance& {
         const auto& style = feature_appearance(g_appearance_config, bit);
-        g_surface.set_style(style.opacity / 100.0f, style.text_color);
+        g_surface.set_style(style.opacity / 100.0f, style.text_color,style.outline_color,
+            style.outline_width*scale);
         return style;
     };
     if(commands.feature_mask&ipc::kFeatureEnemyPaths) {
@@ -642,9 +645,15 @@ void update_live() {
     }
     if(commands.feature_mask&ipc::kFeatureEnemyPaths) {
         advance_paths(snapshot,scale,now,origin,width,height,wants_clicks);
+        if(g_all_path_trigger) {
+            if(!++g_all_path_generation)++g_all_path_generation;
+            g_paths.start_all(g_all_path_generation);g_all_path_trigger=false;
+            g_paths.update(snapshot,g_pointer,scale,now,width,height,g_options);
+        }
         if(g_path_request_callback) g_path_request_callback(snapshot.battle_serial,g_paths.requests());
     } else {
         g_paths.reset();
+        g_all_path_trigger=false;
         if(g_path_request_callback) g_path_request_callback(0,{});
     }
     // 性能：血量/伤害数字跟随会带来高频刷新。这里按「内容指纹」跳过无变化帧，
@@ -883,6 +892,7 @@ void shutdown() {
 bool active() {
     return g_window != nullptr;
 }
+void trigger_all_paths() { g_all_path_trigger=true; }
 
 void set_appearance(std::uint32_t feature, const FeatureAppearance& appearance) {
     auto& current = feature_appearance(g_appearance_config, feature);

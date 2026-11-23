@@ -37,6 +37,7 @@
 #include "../net/cache_directory.h"
 #include "../ui/panels.h"
 #include "../ui/risk_notice.h"
+#include "../ui/shared_mouse_input.h"
 
 #ifndef DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
 #define DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 ((DPI_AWARENESS_CONTEXT)-4)
@@ -245,6 +246,7 @@ private:
 
     void save_config();
     void sync_commands_from_config();
+    void process_shortcuts();
 
     HINSTANCE instance_ = nullptr;
     HWND shell_hwnd_ = nullptr;
@@ -295,6 +297,9 @@ private:
     HANDLE runtime_stop_event_ = nullptr;
     bool game_seen_ = false;   // 本次会话是否见过游戏：见过就绝不自动重启
     bool watch_armed_once_ = false;
+    SharedMouseInput shortcut_input_;
+    ShortcutMatcher<kAppearanceFeatures.size()+1> shortcut_matcher_;
+    HWND shortcut_foreground_=nullptr;
 };
 
 App& App::instance()
@@ -502,6 +507,11 @@ int App::initialize(HINSTANCE instance)
         if (font_changed && bit == ipc::kFeatureWiki) enemy_views_[0].auto_width.request();
         if (font_changed && bit == ipc::kFeatureEnemyPrts) enemy_views_[1].auto_width.request();
         save_config();
+    };
+    menu_callbacks.on_shortcut=[this](std::uint32_t bit,bool all,const Shortcut& binding) {
+        if(all)config_.all_paths_shortcut=binding;
+        else config_.shortcuts[feature_appearance_index(bit)]=binding;
+        shortcut_matcher_.reset();save_config();
     };
     menu_callbacks.on_wiki_fields = [this](uint32_t bit, uint32_t mask) {
         if (bit == ipc::kFeatureEnemyPrts) config_.prts_fields = mask & kWikiAllFields;
@@ -803,6 +813,7 @@ int App::initialize(HINSTANCE instance)
     ready_mutex_ = CreateMutexW(nullptr, FALSE, constants::kReadyMutexName);
     if (!ready_mutex_) return 2;
     SetTimer(shell_hwnd_, constants::kPollTimerId, constants::kPollIntervalMs, nullptr);
+    if(!shortcut_input_.start(shell_hwnd_,WM_APP+40))log_error("keyboard observer unavailable: %lu",GetLastError());
     poll();
     refresh_tray_tooltip();
 
@@ -832,6 +843,7 @@ int App::run()
 
 void App::shutdown()
 {
+    shortcut_input_.stop();
     log_info("shutting down");
     if (ready_mutex_) { CloseHandle(ready_mutex_); ready_mutex_ = nullptr; }
     // 请求游戏运行时停止。开发时可用 ARKHELP_KEEP_RUNTIME=1 保留会话。
@@ -1892,6 +1904,43 @@ void App::sync_commands_from_config()
     commands_.set_ui_scale(static_cast<float>(config_.ui_scale) / 100.0f);
 }
 
+void App::process_shortcuts()
+{
+    for(const auto& event:shortcut_input_.take()) {
+        if(event.message==WM_CANCELMODE){shortcut_matcher_.reset();continue;}
+        if(event.message!=WM_KEYDOWN && event.message!=WM_KEYUP && event.message!=WM_SYSKEYDOWN && event.message!=WM_SYSKEYUP)continue;
+        const auto foreground=GetAncestor(GetForegroundWindow(),GA_ROOT);
+        if(foreground!=event.foreground){shortcut_matcher_.reset();continue;}
+        if(shortcut_foreground_!=foreground){shortcut_foreground_=foreground;shortcut_matcher_.reset();}
+        DWORD pid=0;GetWindowThreadProcessId(foreground,&pid);
+        const bool own=pid==GetCurrentProcessId();
+        wchar_t cls[96]{},title[192]{};GetClassNameW(foreground,cls,96);GetWindowTextW(foreground,title,192);
+        const bool game=!std::wcscmp(cls,L"UnityWndClass") && std::wcsstr(title,L"明日方舟");
+        if(!own && !game){shortcut_matcher_.reset();continue;}
+        const bool down=event.message==WM_KEYDOWN || event.message==WM_SYSKEYDOWN;
+        if(own && menu_record_shortcut_key(static_cast<unsigned>(event.keys),down)){shortcut_matcher_.reset();continue;}
+        if(own) {GUITHREADINFO info{sizeof(info)};if(GetGUIThreadInfo(0,&info) && info.hwndFocus) {
+            wchar_t focus[64]{};GetClassNameW(info.hwndFocus,focus,64);
+            if(std::wcsstr(focus,L"Edit")){shortcut_matcher_.reset();continue;}
+        }}
+        std::array<Shortcut,kAppearanceFeatures.size()+1> bindings;
+        std::copy(config_.shortcuts.begin(),config_.shortcuts.end(),bindings.begin());
+        bindings.back()=config_.all_paths_shortcut;
+        shortcut_matcher_.input(static_cast<unsigned>(event.keys),down,bindings,[&](std::size_t index) {
+            if(index<kAppearanceFeatures.size()) {
+                const auto bit=kAppearanceFeatures[index];
+                if(config_.menu_features&bit)on_feature_toggle(bit,!(config_.features&bit));
+            } else if(config_.menu_features&ipc::kFeatureEnemyPaths) {
+                ipc::BattleSnapshot snapshot;
+                if(battle_.read(snapshot) && snapshot.in_battle) {
+                    if(!(config_.features&ipc::kFeatureEnemyPaths))on_feature_toggle(ipc::kFeatureEnemyPaths,true);
+                    overlay::trigger_all_paths();
+                }
+            }
+        });
+    }
+}
+
 LRESULT CALLBACK App::shell_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
     return App::instance().handle_shell_message(hwnd, message, wparam, lparam);
@@ -1901,9 +1950,12 @@ LRESULT App::handle_shell_message(HWND hwnd, UINT message, WPARAM wparam, LPARAM
 {
     switch (message)
     {
+    case WM_APP+40:process_shortcuts();return 0;
     case WM_TIMER:
         if (wparam == constants::kPollTimerId)
         {
+            const auto foreground=GetAncestor(GetForegroundWindow(),GA_ROOT);
+            if(shortcut_foreground_!=foreground){shortcut_foreground_=foreground;shortcut_matcher_.reset();}
             poll();
             return 0;
         }

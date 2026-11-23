@@ -187,6 +187,36 @@ int main() {
         check(ipc::spawn_path_id(0)!=42 && ipc::is_spawn_path(ipc::spawn_path_id(65535)) &&
             !ipc::spawn_path_id(65536) && !ipc::is_spawn_path(ipc::kSpawnPathTag) && !ipc::is_spawn_path(42),
             "route target namespace or limits overlap ordinary instance IDs");
-        std::printf("PASS path animation: %d checks; trigger, pending, completion, residue, click, identity, teleport, resize\n",checks);
+        animation.reset();snapshot=fixture();snapshot.unit_count=0;snapshot.path_count=0;
+        options.path_speed=50;options.path_linger_ms=1000;options.path_on_click=false;
+        step(1000,away);animation.start_all(5);step(1001,away);
+        check(animation.requests().size()==1 && ipc::is_all_paths(animation.requests()[0]),"all-path trigger never requested a provider batch");
+        snapshot.path_all_request=ipc::all_paths_id(5);
+        snapshot.path_all_batch=1;snapshot.path_count=1;snapshot.paths[0]=path;
+        snapshot.paths[0].tracking_id=900;snapshot.paths[0].point_count=1;
+        step(1050,away);
+        check(std::none_of(animation.playbacks().begin(),animation.playbacks().end(),[](const auto& p){return p.id;}),
+            "malformed all-path batch allocated a playback that could never finish");
+        for(unsigned batch=1;batch<=3;++batch) {
+            snapshot.path_all_batch=batch+1;snapshot.path_count=64;
+            snapshot.path_all_cycle_complete=batch==3;
+            for(unsigned i=0;i<64;++i) {
+                auto& p=snapshot.paths[i];p=path;p.battle_serial=1;p.tracking_id=1000+(batch-1)*64+i;
+                p.sampled_ms=1000+batch*100;p.flags=ipc::kPathValid|ipc::kPathComplete;
+            }
+            step(1000+batch*100,away);
+        }
+        check(std::count_if(animation.playbacks().begin(),animation.playbacks().end(),[](const auto& p){return p.id && p.ready;})==192,
+            "streamed all-path drawing silently stopped at 64 enemies");
+        snapshot.path_all_batch++;snapshot.path_count=1;snapshot.paths[0].tracking_id=ipc::spawn_path_id(23);
+        snapshot.paths[0].sampled_ms=1400;step(1400,away);
+        check(std::any_of(animation.playbacks().begin(),animation.playbacks().end(),[](const auto& p){return p.id==ipc::spawn_path_id(23) && p.ready;}),
+            "all-path batches omitted pending red gate routes");
+        snapshot.path_all_batch++;snapshot.paths[0].tracking_id=1000;snapshot.paths[0].flags=ipc::kPathGone;snapshot.paths[0].point_count=0;
+        step(1500,away);
+        check(std::none_of(animation.playbacks().begin(),animation.playbacks().end(),[](const auto& p){return p.id==1000;}),"dead all-path target survived a removal batch");
+        snapshot.battle_serial++;step(1600,away);
+        check(animation.requests().empty(),"all-path request leaked into the next battle");
+        std::printf("PASS path animation: %d checks; trigger, pending, completion, residue, click, identity, teleport, resize, streamed all enemies\n",checks);
     } catch(const std::exception& error) { std::fprintf(stderr,"FAIL %s\n",error.what()); return 1; }
 }

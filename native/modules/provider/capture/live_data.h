@@ -230,6 +230,11 @@ class EnemyReader {
     }
 public:
     void clear() { cache_ = {}; next_ = 0; }
+    std::uint64_t identity(il2cpp::Runtime& rt,void* unit,std::uint32_t serial) {
+        Access& a=access(rt,rt.object_class(unit));std::uint32_t uid=0;
+        if(a.uid && rt.klass_name(rt.class_from_type(rt.field_type(a.uid)))=="System.UInt32")rt.field_get(unit,a.uid,&uid);
+        return (uid?(static_cast<std::uint64_t>(serial)<<32u)|uid:reinterpret_cast<std::uintptr_t>(unit)) & ~::arkhelp::ipc::kSpawnPathTag;
+    }
     EnemySample read(il2cpp::Runtime& rt, void* unit, std::uint32_t serial) {
         EnemySample out;
         Access& a = access(rt, rt.object_class(unit));

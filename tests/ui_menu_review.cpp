@@ -57,6 +57,9 @@ int wmain(int argc, wchar_t** argv) {
         callbacks.on_appearance = [&](std::uint32_t bit,const FeatureAppearance& value) {
             feature_appearance(config,bit)=value;
         };
+        callbacks.on_shortcut=[&](std::uint32_t bit,bool all,const Shortcut& binding) {
+            if(all)config.all_paths_shortcut=binding;else config.shortcuts[feature_appearance_index(bit)]=binding;
+        };
         callbacks.on_wiki_fields = [&](std::uint32_t bit, std::uint32_t value) {
             (bit == ipc::kFeatureEnemyPrts ? config.prts_fields : config.wiki_fields) = value;
         };
@@ -135,16 +138,16 @@ int wmain(int argc, wchar_t** argv) {
         const HWND original = g_menu.hwnd;
         menu_open_config(ipc::kFeatureHpBars);
         save(L"menu-hp-paused.bmp");
-        if (g_menu.viewport.content_height != S(kAppearanceHeight+264) || g_menu.surface.height>S(464))
+        if (g_menu.viewport.content_height != S(appearance_height()+264) || g_menu.surface.height>S(464))
             throw std::runtime_error("appearance and pause configuration retained excessive blank height");
         for(const auto bit:kAppearanceFeatures) {
             menu_open_config(bit);
             const auto& area=g_menu.layout.appearance_font;
             const POINT point{(area.left+area.right)/2,(area.top+area.bottom)/2};
             if(bit==ipc::kFeatureEnemyRange) {
-                if(hit_test(point)==HitTarget::kAppearanceFont || hit_test(point)==HitTarget::kAppearanceColor ||
-                   g_menu.viewport.content_height!=S(130+200))
-                    throw std::runtime_error("range exposes unused text options or keeps their blank space");
+                if(hit_test(point)!=HitTarget::kAppearanceColor ||
+                   g_menu.viewport.content_height!=S(appearance_height()+330))
+                    throw std::runtime_error("range outline colour is unreachable or page height clips its controls");
             } else if(bit==ipc::kFeatureEnemyPaths) {
                 if(hit_test(point)!=HitTarget::kAppearanceColor) throw std::runtime_error("path colour control missing");
             } else if(hit_test(point)!=HitTarget::kAppearanceFont)
@@ -165,6 +168,23 @@ int wmain(int argc, wchar_t** argv) {
             if(!(feature_appearance(config,bit)==FeatureAppearance{}))
                 throw std::runtime_error("feature appearance default did not reset");
         }
+        menu_open_config(ipc::kFeatureEnemyPaths);g_menu.visible=true;
+        click_rect(shortcut_rect(false),HitTarget::kShortcutRecord);
+        menu_record_shortcut_key(VK_CONTROL,true);menu_record_shortcut_key('P',true);
+        menu_record_shortcut_key('P',false);menu_record_shortcut_key(VK_CONTROL,false);
+        const auto chord=shortcut_parse(L"17+80");
+        if(config.shortcuts[feature_appearance_index(ipc::kFeatureEnemyPaths)]!=chord)throw std::runtime_error("shortcut recording did not persist chord");
+        click_rect(shortcut_rect(true),HitTarget::kAllPathsRecord);
+        menu_record_shortcut_key(VK_CONTROL,true);menu_record_shortcut_key('P',true);
+        menu_record_shortcut_key('P',false);menu_record_shortcut_key(VK_CONTROL,false);
+        if(g_menu.shortcut_error.empty() || !config.all_paths_shortcut.empty())throw std::runtime_error("duplicate shortcut was accepted");
+        click_rect(shortcut_rect(true),HitTarget::kAllPathsRecord);
+        menu_record_shortcut_key(VK_F6,true);menu_record_shortcut_key(VK_F6,false);
+        if(config.all_paths_shortcut!=shortcut_parse(L"117"))throw std::runtime_error("all paths single-key recording failed");
+        save(L"menu-path-shortcuts.bmp");
+        click_rect(shortcut_rect(false,true),HitTarget::kShortcutClear);
+        if(!config.shortcuts[feature_appearance_index(ipc::kFeatureEnemyPaths)].empty())throw std::runtime_error("shortcut clear failed");
+        g_menu.visible=false;
         menu_open_config(ipc::kFeatureEnemyRange);
         click_rect(g_menu.layout.pause_row,HitTarget::kConfigToggle);
         if (!config.range_only_paused || config.hp_only_paused) throw std::runtime_error("range pause setting changed the wrong feature");
@@ -365,6 +385,14 @@ int wmain(int argc, wchar_t** argv) {
             throw std::runtime_error("scaled short-screen menu exceeds work area or cannot scroll");
         if(!panels::initialize(GetModuleHandleW(nullptr),{})) throw std::runtime_error("panel review creation failed");
         auto* panel=panels::g_panels[0];
+        panels::g_shared_gesture=panel;panels::g_shared_hover=panel;
+        panels::g_shared_source=panel->hwnd;
+        const int original_x=panel->x,original_y=panel->y;
+        panels::dispatch_shared_mouse({WM_KEYDOWN,{},'K'});
+        panels::dispatch_shared_mouse({WM_KEYUP,{},'K'});
+        if(panels::g_shared_gesture!=panel || panels::g_shared_hover!=panel || panel->x!=original_x || panel->y!=original_y)
+            throw std::runtime_error("keyboard events changed panel mouse gesture or position");
+        panels::g_shared_gesture=panels::g_shared_hover=nullptr;panels::g_shared_source=nullptr;
         int settings_clicks=0,row_clicks=0;
         panels::g_callbacks.on_settings=[&](const wchar_t*) { ++settings_clicks; };
         panels::g_callbacks.on_row_clicked=[&](const wchar_t*,int) { ++row_clicks; };

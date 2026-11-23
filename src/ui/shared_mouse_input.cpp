@@ -19,7 +19,19 @@ struct MouseInputBroker {
     bool native_only = false, remote_active = false;
     MouseRelayReader relay;
     HHOOK hook=nullptr;
+    HHOOK keyboard_hook=nullptr;
     static thread_local MouseInputBroker* current;
+    static LRESULT CALLBACK observe_key(int code,WPARAM message,LPARAM data) {
+        auto* self=current;
+        if(code==HC_ACTION && self && !self->remote_active) {
+            const auto& key=*reinterpret_cast<const KBDLLHOOKSTRUCT*>(data);
+            if(message==WM_KEYDOWN || message==WM_KEYUP || message==WM_SYSKEYDOWN || message==WM_SYSKEYUP) try {
+                self->deliver(SharedMouseEvent{static_cast<UINT>(message),{},key.vkCode,
+                    GetTickCount64(),GetAncestor(GetForegroundWindow(),GA_ROOT)});
+            } catch(...){}
+        }
+        return CallNextHookEx(nullptr,code,message,data);
+    }
 
     static LRESULT CALLBACK observe(int code,WPARAM message,LPARAM data) {
         auto* self=current;
@@ -74,7 +86,8 @@ struct MouseInputBroker {
     void deliver(const SharedMouseEvent& event) {
         std::lock_guard lock(subscribers_mutex);
         for (auto* client : subscribers) {
-            client->left_down_.store(event.message!=WM_CANCELMODE && (event.keys & MK_LBUTTON)!=0, std::memory_order_relaxed);
+            if(event.message==WM_CANCELMODE || (event.message>=WM_MOUSEFIRST && event.message<=WM_MOUSELAST))
+                client->left_down_.store(event.message!=WM_CANCELMODE && (event.keys & MK_LBUTTON)!=0, std::memory_order_relaxed);
             try { client->enqueue(event); } catch (...) {}
         }
     }
@@ -90,14 +103,16 @@ struct MouseInputBroker {
         RAWINPUT raw{};
         UINT size = sizeof(raw);
         if (GetRawInputData(handle, RID_INPUT, &raw, &size, sizeof(RAWINPUTHEADER)) == UINT(-1)) return;
-        if(remote_active || hook)return;
         if (raw.header.dwType == RIM_TYPEKEYBOARD) {
+            if(remote_active || keyboard_hook)return;
             const auto& key = raw.data.keyboard;
             const bool down = !(key.Flags & RI_KEY_BREAK);
             if (key.VKey == VK_SHIFT) shifts[key.MakeCode == 0x36] = down;
             if (key.VKey == VK_CONTROL) controls[(key.Flags & RI_KEY_E0) != 0] = down;
+            deliver(SharedMouseEvent{static_cast<UINT>(down?WM_KEYDOWN:WM_KEYUP),{},key.VKey,GetTickCount64(),GetAncestor(GetForegroundWindow(),GA_ROOT)});
             return;
         }
+        if(remote_active || hook)return;
         if (raw.header.dwType != RIM_TYPEMOUSE) return;
         const auto flags = raw.data.mouse.usButtonFlags;
         const DWORD packed = GetMessagePos();
@@ -157,8 +172,9 @@ struct MouseInputBroker {
         RAWINPUTDEVICE devices[]{{0x01, 0x02, RIDEV_INPUTSINK, self.window},
                                  {0x01, 0x06, RIDEV_INPUTSINK, self.window}};
         self.hook=SetWindowsHookExW(WH_MOUSE_LL,observe,GetModuleHandleW(nullptr),0);
-        const bool raw_registered=!self.hook && self.window && RegisterRawInputDevices(devices,2,sizeof(RAWINPUTDEVICE));
-        if (!self.window || (!self.hook && !raw_registered))
+        self.keyboard_hook=SetWindowsHookExW(WH_KEYBOARD_LL,observe_key,GetModuleHandleW(nullptr),0);
+        const bool raw_registered=(!self.hook || !self.keyboard_hook) && self.window && RegisterRawInputDevices(devices,2,sizeof(RAWINPUTDEVICE));
+        if (!self.window || ((!self.hook || !self.keyboard_hook) && !raw_registered))
             self.error = GetLastError();
         SetEvent(self.ready);
         if (!self.error) {
@@ -173,6 +189,7 @@ struct MouseInputBroker {
         }
         if (self.window) DestroyWindow(self.window);
         if(self.hook){UnhookWindowsHookEx(self.hook);self.hook=nullptr;}
+        if(self.keyboard_hook){UnhookWindowsHookEx(self.keyboard_hook);self.keyboard_hook=nullptr;}
         current=nullptr;
         self.relay.close();
         self.window = nullptr;

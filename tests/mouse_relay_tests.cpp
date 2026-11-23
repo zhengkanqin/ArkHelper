@@ -33,6 +33,12 @@ int main() {
         check(reader.poll(now,receive) && events.size()==3,"fast down/up/move not preserved");
         check(events[0].screen.x==200 && events[2].screen.x==500 && events[0].foreground==reinterpret_cast<HWND>(0x1234),"historical click position or foreground lost");
         reader.poll(now,receive);check(events.size()==3,"mouse events duplicated");
+        events.clear();
+        append(WM_KEYDOWN,0,0,VK_CONTROL);append(WM_KEYDOWN,0,0,'K');
+        append(WM_KEYUP,0,0,'K');append(WM_KEYUP,0,0,VK_CONTROL);
+        check(reader.poll(now,receive) && events.size()==4 && events[0].keys==VK_CONTROL &&
+            events[1].keys=='K' && events[2].message==WM_KEYUP && events[3].foreground==reinterpret_cast<HWND>(0x1234),
+            "keyboard chord lost ordered down/up, VK code or foreground across the relay");
         events.clear();state->written+=kMouseRelayCapacity+1;
         check(reader.poll(now,receive) && events.size()==1 && events[0].message==WM_CANCELMODE,"overflow did not cancel gesture");
         events.clear();state->epoch++;
